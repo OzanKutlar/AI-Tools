@@ -1,0 +1,296 @@
+import os
+from rich.text import Text
+from textual.app import App, ComposeResult
+from textual.widgets import Tree, Header, Footer, Label, Input
+from textual.binding import Binding
+
+class SelectionTree(Tree):
+    """Custom Tree that prevents Enter from expanding nodes and maps vim keys."""
+    BINDINGS = [
+        Binding("enter", "toggle_select", "Toggle Selection"),
+        Binding("space", "toggle_select", "Toggle Selection"),
+        Binding("h", "collapse_node", "Collapse", show=False),
+        Binding("l", "expand_node", "Expand", show=False),
+        Binding("left", "collapse_node", "Collapse", show=False),
+        Binding("right", "expand_node", "Expand", show=False),
+        Binding("j", "cursor_down", "Down", show=False),
+        Binding("k", "cursor_up", "Up", show=False),
+    ]
+
+    def action_toggle_select(self) -> None:
+        self.app.action_toggle_node()
+
+    def action_expand_node(self) -> None:
+        node = self.cursor_node
+        if node:
+            node.expand()
+
+    def action_collapse_node(self) -> None:
+        node = self.cursor_node
+        if node:
+            if node.is_expanded:
+                node.collapse()
+            elif node.parent:
+                self.select_node(node.parent)
+
+class FileSelector(App):
+    """Full-screen TUI for selecting which files to include."""
+    CSS = """
+    Screen {
+        background: #2d2825;
+    }
+    SelectionTree {
+        background: #2d2825;
+        color: #ead6c9;
+        padding: 1 2;
+        scrollbar-color: #5a4d45;
+        scrollbar-color-hover: #d08c60;
+        scrollbar-color-active: #d08c60;
+    }
+    SelectionTree:focus > .tree--cursor {
+        background: #d08c60;
+        color: #2d2825;
+        text-style: bold;
+    }
+    SelectionTree > .tree--guides {
+        color: #5a4d45;
+    }
+    SelectionTree > .tree--guides-hover {
+        color: #d08c60;
+    }
+    #path-display {
+        background: #3c3431;
+        color: #ead6c9;
+        padding: 0 1;
+        height: auto;
+        border-top: solid #5a4d45;
+        overflow: hidden;
+    }
+    Header {
+        background: #d08c60;
+        color: #2d2825;
+    }
+    Footer {
+        background: #3c3431;
+    }
+    Footer > .footer--key {
+        background: #d08c60;
+        color: #2d2825;
+    }
+    Footer > .footer--description {
+        color: #ead6c9;
+    }
+    """
+    BINDINGS = [
+        Binding("a", "select_all", "Select All"),
+        Binding("n", "select_none", "Deselect All"),
+        Binding("s", "focus_search", "Search"),
+        Binding("q", "confirm", "Confirm"),
+        Binding("escape", "cancel", "Cancel"),
+    ]
+    TITLE = "CombineCopy — File Selector"
+
+    def __init__(self, root_dir: str, files: list[str]):
+        super().__init__()
+        self.root_dir = root_dir
+        self.all_files = files
+        self.selected_paths = set(files)
+        self.search_term = ""
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        yield Input(placeholder="Search files (Enter to jump to tree)...", id="search-input")
+        yield SelectionTree("root", id="file-tree")
+        yield Label("", id="path-display")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self._build_tree()
+        self._update_subtitle()
+        self.query_one("#file-tree").focus()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        self.search_term = event.value
+        self._build_tree()
+        self._update_subtitle()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self.query_one("#file-tree").focus()
+
+    @staticmethod
+    def _make_label(name: str, selected: bool, node_type: str) -> Text:
+        icon = "📂 " if node_type == "folder" else "📄 "
+        label = Text()
+        if selected:
+            label.append("☑ ", style="bold green")
+        else:
+            label.append("☐ ", style="bold red")
+        if node_type == "folder":
+            label.append(icon + name, style="bold")
+        else:
+            label.append(icon + name)
+        return label
+
+    def _build_tree(self) -> None:
+        tree = self.query_one("#file-tree", SelectionTree)
+        tree.clear()
+        root_name = os.path.basename(self.root_dir) or self.root_dir
+        tree.root.data = {"type": "folder", "selected": True, "name": root_name}
+
+        for file_path in self.all_files:
+            rel_path = os.path.relpath(file_path, self.root_dir)
+            if self.search_term and self.search_term.lower() not in rel_path.lower():
+                continue
+
+            parts = rel_path.replace("\\", "/").split("/")
+            current_node = tree.root
+            for i, part in enumerate(parts):
+                if i == len(parts) - 1:
+                    is_selected = file_path in self.selected_paths
+                    current_node.add_leaf(
+                        self._make_label(part, is_selected, "file"),
+                        data={"type": "file", "selected": is_selected, "name": part, "path": file_path},
+                    )
+                else:
+                    found = None
+                    for child in current_node.children:
+                        if (child.data and child.data.get("type") == "folder" and child.data.get("name") == part):
+                            found = child
+                            break
+                    if found:
+                        current_node = found
+                    else:
+                        new_node = current_node.add(
+                            self._make_label(part, True, "folder"),
+                            data={"type": "folder", "selected": True, "name": part},
+                        )
+                        current_node = new_node
+        self._update_folder_states(tree.root)
+        tree.root.expand()
+
+    def _update_folder_states(self, node) -> bool:
+        if not node.children and node.data and node.data.get("type") == "folder":
+            return node.data.get("selected", False)
+        if node.data and node.data.get("type") == "file":
+            return node.data.get("selected", False)
+            
+        all_selected = True
+        has_children = False
+        for child in node.children:
+            has_children = True
+            if not self._update_folder_states(child):
+                all_selected = False
+                
+        if not has_children:
+            all_selected = node.data.get("selected", False) if node.data else False
+                
+        if node.data:
+            node.data["selected"] = all_selected
+            node.set_label(self._make_label(node.data["name"], all_selected, node.data["type"]))
+        return all_selected
+
+    def _set_selected(self, node, selected: bool) -> None:
+        if node.data is None:
+            return
+        node.data["selected"] = selected
+        node.set_label(self._make_label(node.data["name"], selected, node.data["type"]))
+        for child in node.children:
+            self._set_selected(child, selected)
+
+    def _count_selected(self, node=None) -> int:
+        if node is None:
+            node = self.query_one("#file-tree", SelectionTree).root
+        count = 0
+        if node.data and node.data["type"] == "file" and node.data["selected"]:
+            count = 1
+        for child in node.children:
+            count += self._count_selected(child)
+        return count
+
+    def _update_subtitle(self) -> None:
+        self.sub_title = f"{self._count_selected()}/{len(self.all_files)} files selected"
+
+    def _update_parent_states(self, node) -> None:
+        parent = node.parent
+        while parent and parent.data:
+            all_selected = True
+            if not parent.children:
+                all_selected = False
+            else:
+                for child in parent.children:
+                    if child.data and not child.data.get("selected", False):
+                        all_selected = False
+                        break
+            if parent.data.get("selected") != all_selected:
+                parent.data["selected"] = all_selected
+                parent.set_label(self._make_label(parent.data["name"], all_selected, parent.data["type"]))
+                parent = parent.parent
+            else:
+                break
+
+    def _collect_selected(self, node) -> list[str]:
+        result: list[str] = []
+        if node.data and node.data["type"] == "file" and node.data["selected"]:
+            result.append(node.data["path"])
+        for child in node.children:
+            result.extend(self._collect_selected(child))
+        return result
+
+    def on_tree_node_highlighted(self, event: Tree.NodeHighlighted) -> None:
+        node = event.node
+        if node and node.data:
+            path = node.data.get("path")
+            if not path:
+                parts = []
+                curr = node
+                while curr and curr.data and curr != self.query_one("#file-tree").root:
+                    parts.append(curr.data["name"])
+                    curr = curr.parent
+                path_str = "/ ".join(reversed(parts))
+                display_text = Text.assemble((" Folder: ", "bold cyan"), path_str)
+            else:
+                rel_path = os.path.relpath(path, self.root_dir)
+                dirname = os.path.dirname(rel_path)
+                filename = os.path.basename(rel_path)
+                display_text = Text()
+                display_text.append(" File: ", style="bold cyan")
+                if dirname:
+                    display_text.append(f"{dirname}/", style="dim")
+                display_text.append(filename, style="bold yellow")
+            self.query_one("#path-display", Label).update(display_text)
+
+    def action_toggle_node(self) -> None:
+        tree = self.query_one("#file-tree", SelectionTree)
+        node = tree.cursor_node
+        if not node or not node.data:
+            return
+        new_state = not node.data["selected"]
+        self._set_selected(node, new_state)
+        self._update_parent_states(node)
+        self._update_subtitle()
+
+    def action_focus_search(self) -> None:
+        self.query_one("#search-input").focus()
+
+    def on_tree_node_selected(self, event) -> None:
+        self.action_toggle_node()
+
+    def action_select_all(self) -> None:
+        self._set_selected(self.query_one("#file-tree", SelectionTree).root, True)
+        self._update_subtitle()
+
+    def action_select_none(self) -> None:
+        self._set_selected(self.query_one("#file-tree", SelectionTree).root, False)
+        self._update_subtitle()
+
+    def action_confirm(self) -> None:
+        tree = self.query_one("#file-tree", SelectionTree)
+        self.exit(self._collect_selected(tree.root))
+
+    def action_cancel(self) -> None:
+        self.exit(None)
+
+def run_file_selector(root_dir: str, files: list[str]):
+    """Launch the file-selector TUI. Returns selected paths, or None if cancelled."""
+    app = FileSelector(root_dir, files)
+    return app.run()

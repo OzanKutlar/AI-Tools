@@ -1,0 +1,271 @@
+import os
+import json
+import difflib
+import re
+import subprocess
+from rich.console import Console
+from rich.table import Table
+from rich import box
+from rich.rule import Rule
+from rich.text import Text
+from rich.style import Style
+import pyperclip
+
+# Initialize Rich Console
+console = Console()
+
+def is_binary_file(filepath: str) -> bool:
+    """Check if a file is binary by extension or by looking for null bytes in the first 8192 bytes."""
+    binary_extensions = {
+        '.pdf', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.webp', '.tiff',
+        '.zip', '.tar', '.gz', '.7z', '.rar',
+        '.exe', '.dll', '.so', '.dylib', '.bin',
+        '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+        '.mp3', '.mp4', '.avi', '.mkv', '.mov', '.wav', '.flac',
+        '.pyc', '.pyd', '.o', '.a', '.class', '.jar'
+    }
+    _, ext = os.path.splitext(filepath)
+    if ext.lower() in binary_extensions:
+        return True
+        
+    try:
+        with open(filepath, 'rb') as f:
+            chunk = f.read(8192)
+            if b'\0' in chunk:
+                return True
+            return False
+    except Exception:
+        return False
+
+def safe_read_file(path: str) -> str:
+    """Tries to read a file as UTF-8, falls back to Windows-1252. Ignores binary files."""
+    if is_binary_file(path):
+        return "(This is a binary file)"
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    except UnicodeDecodeError:
+        try:
+            with open(path, "r", encoding="cp1252") as f:
+                return f.read()
+        except UnicodeDecodeError:
+            return "(This is a binary file)"
+
+def intelligent_json_fix(content: str) -> tuple[dict | None, str]:
+    """Iteratively attempts to heal common LLM JSON syntax errors (like unescaped quotes)."""
+    lines = content.split('\n')
+    for i, line in enumerate(lines):
+        match = re.match(r'^(\s*"(?:markdown|commit_message|content|search|replace|pattern|replacement)"\s*:\s*")(.*)$', line)
+        if match:
+            prefix = match.group(1)
+            rest = match.group(2)
+            suffix_match = re.search(r'("\s*(?:,|},|})?\s*)$', rest)
+            if suffix_match:
+                suffix = suffix_match.group(1)
+                value = rest[:-len(suffix)]
+                fixed_value = re.sub(r'(?<!\\)"', r'\"', value)
+                lines[i] = prefix + fixed_value + suffix
+                
+    current = '\n'.join(lines)
+
+    for _ in range(200):
+        try:
+            data = json.loads(current)
+            return data, current
+        except json.JSONDecodeError as e:
+            msg = e.msg
+            pos = e.pos
+        
+            if "Invalid control character" in msg:
+                if pos < len(current):
+                    char = current[pos]
+                    if char == '\n':
+                        current = current[:pos] + '\\n' + current[pos+1:]
+                    elif char == '\t':
+                        current = current[:pos] + '\\t' + current[pos+1:]
+                    elif char == '\r':
+                        current = current[:pos] + '\\r' + current[pos+1:]
+                    else:
+                        current = current[:pos] + '\\u{:04x}'.format(ord(char)) + current[pos+1:]
+                    continue
+                    
+            if "Invalid \\escape" in msg:
+                if pos > 0 and current[pos-1] == '\\':
+                    current = current[:pos-1] + '\\\\' + current[pos:]
+                    continue
+                
+            if "Expecting ',' delimiter" in msg or "Expecting value" in msg or "Extra data" in msg:
+                last_quote = current.rfind('"', 0, pos)
+                if last_quote != -1 and current[last_quote-1] != '\\':
+                    current = current[:last_quote] + '\\"' + current[last_quote+1:]
+                    continue
+                    
+            break
+    return None, content
+
+def render_word_diff(old_text: str, new_text: str, diff_view) -> None:
+    """Calculates word-level diffs and outputs them to the rich RichLog container."""
+    old_lines = old_text.splitlines(keepends=True)
+    new_lines = new_text.splitlines(keepends=True)
+    
+    matcher = difflib.SequenceMatcher(None, old_lines, new_lines)
+    
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == 'equal':
+            if i2 - i1 > 6:
+                if i1 != 0:
+                    for line in old_lines[i1:i1+3]:
+                        diff_view.write(Text("  " + line.rstrip('\n'), style="dim"))
+                diff_view.write(Text("...", style="bold dim"))
+                if i2 != len(old_lines):
+                    for line in old_lines[i2-3:i2]:
+                        diff_view.write(Text("  " + line.rstrip('\n'), style="dim"))
+            else:
+                for line in old_lines[i1:i2]:
+                    diff_view.write(Text("  " + line.rstrip('\n'), style="dim"))
+        else:
+            old_hunk = "".join(old_lines[i1:i2])
+            new_hunk = "".join(new_lines[j1:j2])
+            
+            old_words = re.findall(r'\S+|\s+', old_hunk)
+            new_words = re.findall(r'\S+|\s+', new_hunk)
+            
+            word_matcher = difflib.SequenceMatcher(None, old_words, new_words)
+            
+            diff_text = Text()
+            for w_tag, wi1, wi2, wj1, wj2 in word_matcher.get_opcodes():
+                if w_tag == 'equal':
+                    diff_text.append("".join(old_words[wi1:wi2]))
+                elif w_tag == 'delete':
+                    diff_text.append("".join(old_words[wi1:wi2]), style="white on red")
+                elif w_tag == 'insert':
+                    diff_text.append("".join(new_words[wj1:wj2]), style="black on green")
+                elif w_tag == 'replace':
+                    diff_text.append("".join(old_words[wi1:wi2]), style="white on red strike")
+                    diff_text.append("".join(new_words[wj1:wj2]), style="black on green")
+            
+            diff_view.write(diff_text)
+
+def copy_to_clipboard(text: str) -> bool:
+    """Copies text to the clipboard using pyperclip."""
+    try:
+        pyperclip.copy(text)
+        return True
+    except Exception as e:
+        console.print(f"[bold red]Error copying to clipboard:[/bold red] {e}")
+        return False
+
+def copy_file_to_clipboard(filepath: str) -> bool:
+    """Copies a file to the clipboard using PowerShell so it can be pasted as an attachment."""
+    try:
+        abs_path = os.path.abspath(filepath)
+        subprocess.run(["powershell", "-command", f"Set-Clipboard -Path '{abs_path}'"], check=True)
+        return True
+    except Exception as e:
+        console.print(f"[bold red]Error copying file to clipboard:[/bold red] {e}")
+        return False
+
+def get_files_recursive(directory, current_depth, max_depth, extensions, exclude_dirs=None):
+    """Recursively scans for files up to a certain depth."""
+    file_list = []
+    try:
+        items = sorted(os.listdir(directory))
+    except PermissionError:
+        return []
+
+    files = []
+    dirs = []
+    ignore_dirs = {".git", "node_modules", ".venv", "venv", "env", "__pycache__", ".idea", ".vscode"}
+    if exclude_dirs:
+        ignore_dirs.update(exclude_dirs)
+    for item in items:
+        full_path = os.path.join(directory, item)
+        if os.path.isdir(full_path) and item in ignore_dirs:
+            continue
+        if os.path.isfile(full_path):
+            files.append(full_path)
+        elif os.path.isdir(full_path):
+            dirs.append(full_path)
+
+    for f_path in files:
+        if extensions:
+            if not f_path.lower().endswith(tuple(extensions)):
+                continue
+        file_list.append(f_path)
+
+    if current_depth < max_depth:
+        for d_path in dirs:
+            file_list.extend(get_files_recursive(d_path, current_depth + 1, max_depth, extensions, exclude_dirs))
+            
+    return file_list
+
+def generate_tree_string(files, root_dir) -> str:
+    """Generates a string representation of the directory tree."""
+    tree_dict = {}
+    for f in files:
+        rel_path = os.path.relpath(f, root_dir).replace("\\", "/")
+        parts = rel_path.split("/")
+        current = tree_dict
+        for part in parts:
+            if part not in current:
+                current[part] = {}
+            current = current[part]
+    
+    lines = []
+    def _build_lines(node, prefix=""):
+        entries = sorted(list(node.keys()))
+        for i, key in enumerate(entries):
+            is_last = (i == len(entries) - 1)
+            connector = "└── " if is_last else "├── "
+            lines.append(prefix + connector + key)
+            if node[key]:
+                extension = "    " if is_last else "│   "
+                _build_lines(node[key], prefix + extension)
+    _build_lines(tree_dict)
+    return "\n".join(lines)
+
+def print_auto_summary(result: dict) -> None:
+    """Prints a rich summary of modifications applied."""
+    if not result:
+        return
+    console.print()
+    console.print(Rule("[bold blue]AI Agent Execution Summary[/bold blue]"))
+    files = result.get("files", [])
+    commit_msg = result.get("commit_message", "No commit message")
+    applied_files = [f for f in files if f.get("_status") == "applied"]
+    
+    if not applied_files:
+        from rich.panel import Panel
+        console.print(Panel("No files were applied.", title="Result", style="bold yellow"))
+        return
+        
+    for f in applied_files:
+        action = f.get("action", "modify").lower()
+        path = f.get("path", "Unknown")
+        if action == "create":
+            console.print(f"  [bold green]✓[/bold green] [green]Created File[/green] [bold]{path}[/bold]")
+        elif action == "delete":
+            console.print(f"  [bold red]✗[/bold red] [red]Deleted File[/red] [bold]{path}[/bold]")
+        else:
+            added = f.get("_added", 0)
+            removed = f.get("_removed", 0)
+            diff_str = f" [bold green]+{added}[/bold green] [bold red]-{removed}[/bold red]" if (added > 0 or removed > 0) else ""
+            console.print(f"  [bold yellow]✓[/bold yellow] [yellow]Modified File[/yellow] [bold]{path}[/bold]{diff_str}")
+            
+    console.print()
+    console.print(f"  [bold cyan]Committed with message:[/bold cyan] {commit_msg}")
+    console.print(Rule("[bold green]Done[/bold green]"))
+
+def display_summary(root_dir, max_depth, extensions, batch_count, total_files) -> None:
+    """Prints a pretty table configuration summary."""
+    table = Table(title="Job Configuration", box=box.ROUNDED)
+    table.add_column("Setting", style="cyan", no_wrap=True)
+    table.add_column("Value", style="magenta")
+    
+    ext_str = ", ".join(extensions) if extensions else "All (*.*)"
+    table.add_row("Root Directory", root_dir)
+    table.add_row("Max Depth", str(max_depth))
+    table.add_row("File Extensions", ext_str)
+    table.add_row("Batches", str(batch_count))
+    table.add_row("Total Files Found", f"[bold green]{total_files}[/bold green]")
+    console.print(table)
