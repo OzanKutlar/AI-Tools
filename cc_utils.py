@@ -14,6 +14,18 @@ import pyperclip
 # Initialize Rich Console
 console = Console()
 
+def extract_signatures(filepath: str, content: str) -> list[str]:
+    """Uses regex to extract class and function definitions from source code."""
+    signatures = []
+    lines = content.split('\n')
+    py_pattern = re.compile(r'^\s*(class\s+\w+|def\s+\w+\s*\()')
+    js_pattern = re.compile(r'^\s*(?:export\s+)?(?:default\s+)?(?:class\s+\w+|function\s+\w+\s*\(|(?:const|let|var)\s+\w+\s*=\s*(?:async\s*)?(?:\([^)]*\)|[a-zA-Z0-9_]+)\s*=>)')
+    
+    for line in lines:
+        if py_pattern.match(line) or js_pattern.match(line):
+            signatures.append(line.strip()[:100])
+    return signatures
+
 def is_binary_file(filepath: str) -> bool:
     """Check if a file is binary by extension or by looking for null bytes in the first 8192 bytes."""
     binary_extensions = {
@@ -200,7 +212,7 @@ def get_files_recursive(directory, current_depth, max_depth, extensions, exclude
     return file_list
 
 def generate_tree_string(files, root_dir) -> str:
-    """Generates a string representation of the directory tree."""
+    """Generates a string representation of the directory tree, enriched with AST signatures."""
     tree_dict = {}
     for f in files:
         rel_path = os.path.relpath(f, root_dir).replace("\\", "/")
@@ -210,17 +222,36 @@ def generate_tree_string(files, root_dir) -> str:
             if part not in current:
                 current[part] = {}
             current = current[part]
-    
+            
+    signatures_map = {}
+    for f in files:
+        content = safe_read_file(f)
+        if content and not content.startswith("(This is a binary"):
+            sigs = extract_signatures(f, content)
+            if sigs:
+                rel_path = os.path.relpath(f, root_dir).replace("\\", "/")
+                signatures_map[rel_path] = sigs
+
     lines = []
-    def _build_lines(node, prefix=""):
+    def _build_lines(node, prefix="", path_prefix=""):
         entries = sorted(list(node.keys()))
         for i, key in enumerate(entries):
             is_last = (i == len(entries) - 1)
             connector = "└── " if is_last else "├── "
             lines.append(prefix + connector + key)
-            if node[key]:
+            
+            current_path = f"{path_prefix}/{key}" if path_prefix else key
+            
+            if not node[key]:
+                sigs = signatures_map.get(current_path, [])
                 extension = "    " if is_last else "│   "
-                _build_lines(node[key], prefix + extension)
+                for j, sig in enumerate(sigs):
+                    sig_is_last = (j == len(sigs) - 1)
+                    sig_connector = "└── " if sig_is_last else "├── "
+                    lines.append(prefix + extension + sig_connector + "[AST] " + sig)
+            else:
+                extension = "    " if is_last else "│   "
+                _build_lines(node[key], prefix + extension, current_path)
     _build_lines(tree_dict)
     return "\n".join(lines)
 

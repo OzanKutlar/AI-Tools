@@ -30,13 +30,11 @@ from cc_utils import (
 )
 
 from cc_prompts import (
-    FILE_CULLING_PROMPT,
     ORCHESTRATE_SYSTEM_PROMPT_TEMPLATE,
     DEFAULT_SYSTEM_PROMPT_TEMPLATE
 )
 
 from tui_selection import run_file_selector
-from tui_culling import JsonFileSelector
 from tui_prompt import SystemPromptApp
 from tui_confirm import ConfirmCopyApp
 from tui_apply import AutoAgentApp, OrchestratorAgentApp
@@ -53,10 +51,7 @@ def main():
     parser.add_argument("-r", "--revert", action="store_true", help="Run in continuous AI listener mode but reverse all changes")
     parser.add_argument("-o", "--orchestrate", action="store_true", help="Run in orchestrator mode to generate a precise execution plan and prompt.")
     parser.add_argument("--web", action="store_true", help="Enable web macro mode. Translates applies into simulated keyboard strokes for web IDEs.")
-    parser.add_argument("--json-select", action="store_true", help="Open TUI to pick files via JSON list on clipboard")
-    parser.add_argument("--full", action="store_true", help="Run the full workflow: Select -> System -> JSON Culling -> Auto")
     parser.add_argument("--system", nargs='?', const='DEFAULT', default=None, help="Inject system prompt and user instructions. Optionally provide a path to a custom system prompt file.")
-    parser.add_argument("--file-cull", action="store_true", help="Include file culling functionality in the system prompt")
     parser.add_argument("--file", action="store_true", help="Save prompt to a temp file and copy the file to clipboard")
     args = parser.parse_args()
 
@@ -91,7 +86,7 @@ def main():
 
     all_known_files = []
 
-    if (args.auto or args.revert or args.orchestrate) and not (args.select or args.file_types or args.specific_file or args.system is not None or args.full or args.json_select):
+    if (args.auto or args.revert or args.orchestrate) and not (args.select or args.file_types or args.specific_file or args.system is not None):
         if args.orchestrate:
             app = OrchestratorAgentApp(root_dir, use_file_clipboard=args.file)
             result = app.run()
@@ -120,10 +115,12 @@ def main():
     try:
         console.print(Rule("[bold blue]CombineCopy Tool[/bold blue]"))
         found_files = []
+        important_files = None
         if args.specific_file:
             target_path = os.path.abspath(args.specific_file)
             if os.path.isfile(target_path):
                 found_files = [target_path]
+                important_files = [target_path]
                 console.print(f"[green]Targeting specific file:[/green] {args.specific_file}")
                 if not target_path.startswith(root_dir):
                     root_dir = os.path.dirname(target_path)
@@ -136,21 +133,24 @@ def main():
         
         all_known_files = list(found_files)
 
-        if (args.select or args.full) and found_files:
+        if args.select and found_files:
             console.print("[bold cyan]Phase: Manual File Selection[/bold cyan]")
             selected = run_file_selector(root_dir, found_files)
             if selected is None:
                 console.print(Panel("Selection cancelled.", title="Cancelled", style="bold yellow"))
                 return
-            found_files = selected
-            all_known_files = list(selected)
+            found_files, important_files = selected
+            all_known_files = list(found_files)
+        else:
+            if important_files is None:
+                important_files = list(found_files)
     
         total_files = len(found_files)
         if total_files == 0:
             console.print(Panel("No matching files found.", title="Result", style="bold red"))
             return
 
-        is_targeted = args.select or args.full or args.specific_file or args.json_select
+        is_targeted = args.select or args.specific_file
         if total_files > 250 and not is_targeted:
             app = ConfirmCopyApp(total_files)
             confirmed = app.run()
@@ -161,7 +161,7 @@ def main():
         display_summary(root_dir, max_depth, ext_filters, batch_count, total_files)
     
         user_request_data = None
-        if args.system is not None or args.full:
+        if args.system is not None:
             console.print("[bold cyan]Phase: Instruction & System Prompt[/bold cyan]")
             sys_arg = args.system if args.system else 'DEFAULT'
             if sys_arg == 'DEFAULT' or sys_arg == '':
@@ -169,11 +169,6 @@ def main():
                     sys_prompt_text = ORCHESTRATE_SYSTEM_PROMPT_TEMPLATE.strip()
                 else:
                     sys_prompt_text = DEFAULT_SYSTEM_PROMPT_TEMPLATE.strip()
-                    
-                if args.file_cull:
-                    sys_prompt_text = sys_prompt_text.replace('{FILE_CULLING_INSTRUCTION}', FILE_CULLING_PROMPT)
-                else:
-                    sys_prompt_text = sys_prompt_text.replace('{FILE_CULLING_INSTRUCTION}\n', '').replace('{FILE_CULLING_INSTRUCTION}', '')
             else:
                 try:
                     with open(sys_arg, 'r', encoding='utf-8') as f:
@@ -186,51 +181,6 @@ def main():
             user_request_data = app.run()
             if not user_request_data:
                 console.print(Panel("System prompt setup cancelled.", title="Cancelled", style="bold yellow"))
-                return
-
-        if args.full and user_request_data:
-            console.print("\n[bold cyan]Phase: AI File Culling (Repo Map)[/bold cyan]")
-            repo_tree = generate_tree_string(found_files, root_dir)
-            cull_prompt = (
-                f"--- SYSTEM INSTRUCTIONS ---\n"
-                f"{user_request_data['system']}\n\n"
-                f"--- USER REQUEST ---\n"
-                f"{user_request_data['request']}\n\n"
-                f"--- DIRECTORY TREE ---\n"
-                f"{repo_tree}\n\n"
-                f"Please reply with ONLY a JSON array of strings representing the file paths you need to view fully to complete this task. Example:[\"main.py\", \"src/utils.py\"]"
-            )
-            if copy_to_clipboard(cull_prompt):
-                console.print(Panel(
-                    "[bold green]Culling Prompt copied to clipboard![/bold green]\n"
-                    "Paste this to the LLM. Once it replies with the JSON list of files, copy that JSON to your clipboard.",
-                    border_style="green"
-                ))
-            
-            cull_app = JsonFileSelector(root_dir)
-            selected_json_files = cull_app.run()
-            if selected_json_files is None:
-                console.print(Panel("JSON Culling cancelled.", title="Cancelled", style="bold yellow"))
-                return
-            found_files = selected_json_files
-            all_known_files = list(selected_json_files)
-            total_files = len(found_files)
-            if total_files == 0:
-                console.print(Panel("No matching files found after culling.", title="Result", style="bold red"))
-                return
-
-        elif args.json_select and not args.full:
-            console.print("[bold cyan]Phase: File Culling (JSON Selection)[/bold cyan]")
-            cull_app = JsonFileSelector(root_dir)
-            selected_json_files = cull_app.run()
-            if selected_json_files is None:
-                console.print(Panel("JSON Culling cancelled.", title="Cancelled", style="bold yellow"))
-                return
-            found_files = selected_json_files
-            all_known_files = list(selected_json_files)
-            total_files = len(found_files)
-            if total_files == 0:
-                console.print(Panel("No matching files found after culling.", title="Result", style="bold red"))
                 return
 
         files_per_batch = math.ceil(total_files / batch_count)
@@ -253,6 +203,11 @@ def main():
                 content_buffer.append(user_request_data["system"])
                 content_buffer.append("\n--- USER REQUEST ---")
                 content_buffer.append(user_request_data["request"])
+                
+                ast_tree = generate_tree_string(found_files, root_dir)
+                content_buffer.append("\n--- DIRECTORY AST MAP ---")
+                content_buffer.append(ast_tree)
+                
                 content_buffer.append("\n--- FILE CONTEXT ---")
     
             console.print(Rule(f"[bold yellow]Batch {batch_num}/{batch_count}[/bold yellow]"))
@@ -268,23 +223,28 @@ def main():
                 task = progress.add_task(f"[cyan]Processing {len(current_batch_files)} files (Press Ctrl+C to cancel)...", total=len(current_batch_files))
 
                 def worker_fn():
+                    important_set = set(important_files) if important_files is not None else set()
                     for file_path in current_batch_files:
                         if stop_event.is_set(): return
-                        rel_path = os.path.relpath(file_path, root_dir)
-                        progress.console.print(f"  [green]✓[/green] Adding [bold]{rel_path}[/bold]")
-                        _, ext = os.path.splitext(rel_path)
-                        lang = ext.lstrip('.').lower()
-                        content_buffer.append(separator)
-                        content_buffer.append(f"FILE: {rel_path}")
-                        content_buffer.append(separator)
-                        content_buffer.append(f"```{lang}")
-                        try:
-                            content_buffer.append(safe_read_file(file_path))
-                        except Exception as e:
-                            progress.console.print(f"  [red]![/red] Error reading {rel_path}: {e}")
-                            content_buffer.append(f"[Error reading file: {e}]")
-                        content_buffer.append("```")
-                        content_buffer.append("\n")
+                        if file_path in important_set:
+                            rel_path = os.path.relpath(file_path, root_dir)
+                            progress.console.print(f"  [green]✓[/green] Adding [bold]{rel_path}[/bold] (Full Context)")
+                            _, ext = os.path.splitext(rel_path)
+                            lang = ext.lstrip('.').lower()
+                            content_buffer.append(separator)
+                            content_buffer.append(f"FILE: {rel_path}")
+                            content_buffer.append(separator)
+                            content_buffer.append(f"```{lang}")
+                            try:
+                                content_buffer.append(safe_read_file(file_path))
+                            except Exception as e:
+                                progress.console.print(f"  [red]![/red] Error reading {rel_path}: {e}")
+                                content_buffer.append(f"[Error reading file: {e}]")
+                            content_buffer.append("```")
+                            content_buffer.append("\n")
+                        else:
+                            rel_path = os.path.relpath(file_path, root_dir)
+                            progress.console.print(f"  [cyan]ℹ[/cyan] Included [bold]{rel_path}[/bold] in AST Map")
                         progress.advance(task)
                     if stop_event.is_set(): return
                     if batch_num == batch_count and user_request_data:
@@ -345,7 +305,7 @@ def main():
         console.print(Panel("[bold red]Process interrupted by user (Ctrl+C).[/bold red]", title="Cancelled"))
         return
         
-    if args.auto or args.full or args.revert or args.orchestrate:
+    if args.auto or args.revert or args.orchestrate:
         if args.orchestrate:
             console.print(f"\n[bold cyan]Phase: Orchestrator Agent Execution[/bold cyan]")
             app = OrchestratorAgentApp(root_dir, use_file_clipboard=args.file)

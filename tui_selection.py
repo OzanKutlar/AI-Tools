@@ -9,6 +9,7 @@ class SelectionTree(Tree):
     BINDINGS = [
         Binding("enter", "toggle_select", "Toggle Selection"),
         Binding("space", "toggle_select", "Toggle Selection"),
+        Binding("i", "toggle_important", "Toggle Important"),
         Binding("h", "collapse_node", "Collapse", show=False),
         Binding("l", "expand_node", "Expand", show=False),
         Binding("left", "collapse_node", "Collapse", show=False),
@@ -85,6 +86,7 @@ class FileSelector(App):
         Binding("a", "select_all", "Select All"),
         Binding("n", "select_none", "Deselect All"),
         Binding("s", "focus_search", "Search"),
+        Binding("i", "toggle_important", "Toggle Important"),
         Binding("q", "confirm", "Confirm"),
         Binding("escape", "cancel", "Cancel"),
     ]
@@ -118,10 +120,12 @@ class FileSelector(App):
         self.query_one("#file-tree").focus()
 
     @staticmethod
-    def _make_label(name: str, selected: bool, node_type: str) -> Text:
+    def _make_label(name: str, selected: bool, node_type: str, important: bool = False) -> Text:
         icon = "📂 " if node_type == "folder" else "📄 "
         label = Text()
-        if selected:
+        if important:
+            label.append("[FULL] ", style="bold magenta")
+        elif selected:
             label.append("☑ ", style="bold green")
         else:
             label.append("☐ ", style="bold red")
@@ -148,8 +152,8 @@ class FileSelector(App):
                 if i == len(parts) - 1:
                     is_selected = file_path in self.selected_paths
                     current_node.add_leaf(
-                        self._make_label(part, is_selected, "file"),
-                        data={"type": "file", "selected": is_selected, "name": part, "path": file_path},
+                        self._make_label(part, is_selected, "file", False),
+                        data={"type": "file", "selected": is_selected, "important": False, "name": part, "path": file_path},
                     )
                 else:
                     found = None
@@ -161,8 +165,8 @@ class FileSelector(App):
                         current_node = found
                     else:
                         new_node = current_node.add(
-                            self._make_label(part, True, "folder"),
-                            data={"type": "folder", "selected": True, "name": part},
+                            self._make_label(part, True, "folder", False),
+                            data={"type": "folder", "selected": True, "important": False, "name": part},
                         )
                         current_node = new_node
         self._update_folder_states(tree.root)
@@ -186,16 +190,24 @@ class FileSelector(App):
                 
         if node.data:
             node.data["selected"] = all_selected
-            node.set_label(self._make_label(node.data["name"], all_selected, node.data["type"]))
+            node.set_label(self._make_label(node.data["name"], all_selected, node.data["type"], node.data.get("important", False)))
         return all_selected
 
     def _set_selected(self, node, selected: bool) -> None:
         if node.data is None:
             return
         node.data["selected"] = selected
-        node.set_label(self._make_label(node.data["name"], selected, node.data["type"]))
+        node.set_label(self._make_label(node.data["name"], selected, node.data["type"], node.data.get("important", False)))
         for child in node.children:
             self._set_selected(child, selected)
+
+    def _set_important(self, node, important: bool) -> None:
+        if node.data is None:
+            return
+        node.data["important"] = important
+        node.set_label(self._make_label(node.data["name"], node.data.get("selected", False), node.data["type"], important))
+        for child in node.children:
+            self._set_important(child, important)
 
     def _count_selected(self, node=None) -> int:
         if node is None:
@@ -223,18 +235,24 @@ class FileSelector(App):
                         break
             if parent.data.get("selected") != all_selected:
                 parent.data["selected"] = all_selected
-                parent.set_label(self._make_label(parent.data["name"], all_selected, parent.data["type"]))
+                parent.set_label(self._make_label(parent.data["name"], all_selected, parent.data["type"], parent.data.get("important", False)))
                 parent = parent.parent
             else:
                 break
 
-    def _collect_selected(self, node) -> list[str]:
-        result: list[str] = []
-        if node.data and node.data["type"] == "file" and node.data["selected"]:
-            result.append(node.data["path"])
+    def _collect_selected(self, node) -> tuple[list[str], list[str]]:
+        selected: list[str] = []
+        important: list[str] = []
+        if node.data and node.data["type"] == "file":
+            if node.data.get("selected"):
+                selected.append(node.data["path"])
+            if node.data.get("important"):
+                important.append(node.data["path"])
         for child in node.children:
-            result.extend(self._collect_selected(child))
-        return result
+            c_sel, c_imp = self._collect_selected(child)
+            selected.extend(c_sel)
+            important.extend(c_imp)
+        return selected, important
 
     def on_tree_node_highlighted(self, event: Tree.NodeHighlighted) -> None:
         node = event.node
@@ -267,6 +285,23 @@ class FileSelector(App):
         new_state = not node.data["selected"]
         self._set_selected(node, new_state)
         self._update_parent_states(node)
+        self._update_subtitle()
+
+    def action_toggle_important(self) -> None:
+        tree = self.query_one("#file-tree", SelectionTree)
+        node = tree.cursor_node
+        if not node or not node.data:
+            return
+        if node.data["type"] == "folder":
+            new_state = not node.data.get("important", False)
+            self._set_important(node, new_state)
+            self._update_parent_states(node)
+        else:
+            new_state = not node.data.get("important", False)
+            if new_state and not node.data.get("selected", False):
+                self._set_selected(node, True)
+                self._update_parent_states(node)
+            self._set_important(node, new_state)
         self._update_subtitle()
 
     def action_focus_search(self) -> None:

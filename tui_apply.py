@@ -816,18 +816,72 @@ class OrchestratorAgentApp(App):
                 return
             self.last_clipboard = content
             
-            if '"phase":' in content and '"ORCHESTRATE"' in content:
+            if '"phase":' in content and ('"ORCHESTRATE"' in content or '"EXPLORATION"' in content):
                 json_blocks = self._extract_json_objects(content)
                 for json_str in json_blocks:
                     try:
                         data = json.loads(json_str)
-                        if isinstance(data, dict) and data.get("phase") == "ORCHESTRATE" and "prompt" in data:
-                            self.load_payload(data)
-                            return
+                        if isinstance(data, dict):
+                            if data.get("phase") == "ORCHESTRATE" and "prompt" in data:
+                                self.load_payload(data)
+                                return
+                            elif data.get("phase") == "EXPLORATION" and "request_files" in data:
+                                self.handle_exploration(data)
+                                return
                     except Exception:
                         continue
         except Exception:
             pass
+
+    def handle_exploration(self, data: dict) -> None:
+        self.polling_timer.pause()
+        self.query_one("#status-label", Label).update("[bold cyan]EXPLORATION Requested[/bold cyan]")
+        requested_files = data.get("request_files", [])
+        
+        buffer = []
+        buffer.append("--- REQUESTED FILE CONTEXT ---")
+        separator = "-" * 35
+        
+        found_any = False
+        for path in requested_files:
+            full_path = os.path.abspath(os.path.join(self.root_dir, path))
+            if not full_path.startswith(self.root_dir):
+                continue
+                
+            buffer.append(separator)
+            buffer.append(f"FILE: {path}")
+            buffer.append(separator)
+            _, ext = os.path.splitext(path)
+            lang = ext.lstrip('.').lower()
+            buffer.append(f"```{lang}")
+            if os.path.exists(full_path):
+                try:
+                    buffer.append(safe_read_file(full_path))
+                    found_any = True
+                except Exception as e:
+                    buffer.append(f"[Error reading file: {e}]")
+            else:
+                buffer.append(f"[File not found: {path}]")
+            buffer.append("```")
+            buffer.append("")
+            
+        if not found_any:
+            buffer.append("\n(No files found matching the request.)")
+            
+        buffer.append("\n--- SYSTEM REMINDER ---")
+        buffer.append("If you still need more files, output another EXPLORATION payload.")
+        buffer.append("If you have enough context, enter PLANNING mode to design your approach.")
+        
+        final_text = "\n".join(buffer)
+        
+        if copy_to_clipboard(final_text):
+            self.notify(f"Fetched {len(requested_files)} files. Copied to clipboard! Please paste back to the LLM.", title="Exploration")
+            self.last_clipboard = final_text
+            
+        self.query_one("#ai-markdown", Markdown).update(f"**The AI requested full context for {len(requested_files)} files.**\n\nThese have been fetched and copied to your clipboard. Paste them back to the AI.")
+        
+        self.polling_timer.resume()
+        self.query_one("#status-label", Label).update("Waiting for Orchestrator AI...")
 
     def load_payload(self, data: dict) -> None:
         self.polling_timer.pause()
