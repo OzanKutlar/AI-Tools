@@ -38,6 +38,7 @@ from tui_selection import run_file_selector
 from tui_prompt import SystemPromptApp
 from tui_confirm import ConfirmCopyApp
 from tui_apply import AutoAgentApp, OrchestratorAgentApp
+from tui_kanban import KanbanApp
 
 def main():
     parser = argparse.ArgumentParser(description="Scan folder and combine file contents to clipboard.")
@@ -53,6 +54,7 @@ def main():
     parser.add_argument("--web", action="store_true", help="Enable web macro mode. Translates applies into simulated keyboard strokes for web IDEs.")
     parser.add_argument("--system", nargs='?', const='DEFAULT', default=None, help="Inject system prompt and user instructions. Optionally provide a path to a custom system prompt file.")
     parser.add_argument("--file", action="store_true", help="Save prompt to a temp file and copy the file to clipboard")
+    parser.add_argument("-k", "--kanban", action="store_true", help="Launch the persistent Kanban board interface")
     args = parser.parse_args()
 
     root_dir = os.getcwd()
@@ -85,6 +87,11 @@ def main():
             sys.exit(1)
 
     all_known_files = []
+
+    if args.kanban:
+        app = KanbanApp(root_dir)
+        app.run()
+        return
 
     if (args.auto or args.revert or args.orchestrate) and not (args.select or args.file_types or args.specific_file or args.system is not None):
         if args.orchestrate:

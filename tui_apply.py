@@ -1833,10 +1833,18 @@ class AutoAgentApp(App):
         try:
             subprocess.run(["git", "add", "."], cwd=self.root_dir, check=True)
             subprocess.run(["git", "commit", "-m", msg], cwd=self.root_dir, check=True)
+            
+            commit_hash = ""
+            try:
+                commit_hash = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.root_dir, text=True).strip()
+            except Exception:
+                pass
+                
             self.notify("Changes successfully committed to Git! Closing app.", title="Success")
             summary_data = {
                 "commit_message": msg,
-                "files": self.payload.get("files", [])
+                "files": self.payload.get("files", []),
+                "commit_hash": commit_hash
             }
             self.exit(summary_data)
         except subprocess.CalledProcessError as e:
