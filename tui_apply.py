@@ -909,6 +909,8 @@ class OrchestratorAgentApp(App):
         return results
 
     def check_clipboard(self) -> None:
+        if getattr(self, 'is_loading_payload', False):
+            return
         try:
             content = pyperclip.paste().strip()
             if not content or content == self.last_clipboard:
@@ -1177,6 +1179,7 @@ class AutoAgentApp(App):
         self.polling_timer = None
         self.json_error_text = None
         self.broken_json_content = ""
+        self.is_loading_payload = False
         if self.revert_mode:
             self.title = "CombineCopy — Auto Agent Listener (REVERT MODE)"
         if self.web_mode:
@@ -1350,7 +1353,7 @@ class AutoAgentApp(App):
             return sorted(unique_cands.values(), key=lambda x: x["start_line"])
         return []
 
-    def _validate_file_obj(self, file_obj: dict) -> None:
+    def _validate_file_obj(self, file_obj: dict, status_callback=None) -> None:
         action = file_obj.get("action", "modify").upper()
         if action == "COMMAND":
             if "command" not in file_obj:
@@ -1394,6 +1397,7 @@ class AutoAgentApp(App):
 
         if action == "MODIFY" and not errors:
             if "regex_replace" in file_obj and os.path.exists(full_path):
+                if status_callback: status_callback(f"Evaluating regex replacements for {path}...")
                 old_text = safe_read_file(full_path)
                 for b_idx, block in enumerate(file_obj.get("regex_replace", [])):
                     pattern = block.get("pattern", "")
@@ -1409,13 +1413,16 @@ class AutoAgentApp(App):
 
             if "search_replace" in file_obj and os.path.exists(full_path):
                 try:
+                    if status_callback: status_callback(f"Reading {path}...")
                     old_text = safe_read_file(full_path)
                     for b_idx, block in enumerate(file_obj.get("search_replace", [])):
+                        if status_callback: status_callback(f"Checking match {b_idx + 1}/{len(file_obj.get('search_replace', []))} in {path}...")
                         block.pop("_candidates", None)
                         if "replace" not in block:
                             errors.append(f"No replacement found for search block {b_idx + 1}.")
                         search_text = block.get("search", "")
                         if search_text and search_text not in old_text:
+                            if status_callback: status_callback(f"Searching fuzzy match {b_idx + 1} in {path}...")
                             normalized_old = self._normalize_text(old_text)
                             normalized_search = self._normalize_text(search_text)
                             if normalized_search in normalized_old:
@@ -1434,6 +1441,7 @@ class AutoAgentApp(App):
                                 if not found_exact:
                                     errors.append(f"Fuzzy match found but couldn't map to original text for block {b_idx+1}.")
                             else:
+                                if status_callback: status_callback(f"Searching partial matches {b_idx + 1} in {path} (this can take a while)...")
                                 candidates = self._find_partial_matches(search_text, old_text)
                                 if candidates:
                                     block["_candidates"] = candidates
@@ -1447,48 +1455,78 @@ class AutoAgentApp(App):
 
     def load_payload(self, data: dict) -> None:
         self.polling_timer.pause()
-        for file_obj in data.get("files", []):
-            for block in file_obj.get("search_replace", []):
-                if "replacement" in block and "replace" not in block:
-                    block["replace"] = block.pop("replacement")
+        self.is_loading_payload = True
+        self.query_one("#status-label", Label).update("[bold cyan]Starting payload validation...[/bold cyan]")
+        thread = threading.Thread(target=self._background_load_payload, args=(data,), daemon=True)
+        thread.start()
 
-        if getattr(self, 'revert_mode', False):
-            data["commit_message"] = "Revert: " + data.get("commit_message", "")
+    def _background_load_payload(self, data: dict) -> None:
+        try:
             for file_obj in data.get("files", []):
-                action = file_obj.get("action", "modify").lower()
-                if action == "command":
-                    file_obj["_revert_warning"] = "Commands cannot be automatically reverted. Please verify manually."
-                elif action == "create":
-                    file_obj["action"] = "delete"
-                elif action == "delete":
-                    file_obj["action"] = "create"
-                    file_obj["content"] = ""
-                    file_obj["_revert_warning"] = "Reverting a delete will create an empty file."
-                elif action == "modify":
-                    if "search_replace" in file_obj:
-                        new_sr = []
-                        for block in reversed(file_obj.get("search_replace", [])):
-                            new_sr.append({
-                                "search": block.get("replace", ""),
-                                "replace": block.get("search", "")
-                            })
-                        file_obj["search_replace"] = new_sr
-                    elif "content" in file_obj:
-                        file_obj["_revert_error"] = "Cannot revert a full file overwrite without original content."
+                for block in file_obj.get("search_replace", []):
+                    if "replacement" in block and "replace" not in block:
+                        block["replace"] = block.pop("replacement")
+
+            if getattr(self, 'revert_mode', False):
+                data["commit_message"] = "Revert: " + data.get("commit_message", "")
+                for file_obj in data.get("files", []):
+                    action = file_obj.get("action", "modify").lower()
+                    if action == "command":
+                        file_obj["_revert_warning"] = "Commands cannot be automatically reverted. Please verify manually."
+                    elif action == "create":
+                        file_obj["action"] = "delete"
+                    elif action == "delete":
+                        file_obj["action"] = "create"
+                        file_obj["content"] = ""
+                        file_obj["_revert_warning"] = "Reverting a delete will create an empty file."
+                    elif action == "modify":
+                        if "search_replace" in file_obj:
+                            new_sr = []
+                            for block in reversed(file_obj.get("search_replace", [])):
+                                new_sr.append({
+                                    "search": block.get("replace", ""),
+                                    "replace": block.get("search", "")
+                                })
+                            file_obj["search_replace"] = new_sr
+                        elif "content" in file_obj:
+                            file_obj["_revert_error"] = "Cannot revert a full file overwrite without original content."
+            
+            def status_cb(msg):
+                def update_lbl():
+                    try:
+                        self.query_one("#status-label", Label).update(f"[bold cyan]{msg}[/bold cyan]")
+                    except Exception:
+                        pass
+                self.call_from_thread(update_lbl)
+
+            files_list = data.get("files", [])
+            for idx, file_obj in enumerate(files_list):
+                file_obj["_status"] = "pending"
+                file_obj.setdefault("_warnings", [])
+                if "_revert_warning" in file_obj:
+                    file_obj["_warnings"].append(file_obj.pop("_revert_warning"))
+                
+                status_cb(f"Validating file {idx + 1}/{len(files_list)}: {file_obj.get('path', 'unknown')}")
+                self._validate_file_obj(file_obj, status_callback=status_cb)
+            
+            self.call_from_thread(self._finish_load_payload, data)
+        except Exception as e:
+            self.call_from_thread(self._cancel_load_payload, str(e))
+
+    def _finish_load_payload(self, data: dict) -> None:
         self.payload = data
+        self.is_loading_payload = False
         self.query_one("#status-label", Label).update("Files waiting to be changed")
         self.query_one("#ai-markdown", Markdown).update(data.get("markdown", "No markdown provided."))
-        
-        for idx, file_obj in enumerate(data.get("files", [])):
-            file_obj["_status"] = "pending"
-            file_obj.setdefault("_warnings", [])
-            if "_revert_warning" in file_obj:
-                file_obj["_warnings"].append(file_obj.pop("_revert_warning"))
-            self._validate_file_obj(file_obj)
         self.refresh_file_list()
         file_list = self.query_one("#file-list", ListView)
         if len(file_list) > 0:
             file_list.index = 0
+
+    def _cancel_load_payload(self, err: str) -> None:
+        self.is_loading_payload = False
+        self.notify(f"Error validating payload: {err}", severity="error")
+        self.reset_state()
 
     def _disable_all_buttons(self) -> None:
         self.query_one("#btn-apply-all", Button).disabled = True
@@ -1873,16 +1911,16 @@ class AutoAgentApp(App):
         try:
             subprocess.run(cmd, check=True)
         except Exception as e:
-            self.app.call_from_thread(self.notify, f"Editor failed to launch: {e}", severity="error")
+            self.call_from_thread(self.notify, f"Editor failed to launch: {e}", severity="error")
         try:
             with open(temp_path, 'r', encoding='utf-8') as f:
                 new_text = f.read()
             if new_text != current_text:
                 pyperclip.copy(new_text)
-                self.app.call_from_thread(self.notify, "Clipboard updated with fixed JSON!", title="Success")
-                self.app.call_from_thread(self.action_reload)
+                self.call_from_thread(self.notify, "Clipboard updated with fixed JSON!", title="Success")
+                self.call_from_thread(self.action_reload)
         except Exception as e:
-            self.app.call_from_thread(self.notify, f"Failed to read from editor: {e}", severity="error")
+            self.call_from_thread(self.notify, f"Failed to read from editor: {e}", severity="error")
         finally:
             try:
                 os.remove(temp_path)
@@ -1893,7 +1931,7 @@ class AutoAgentApp(App):
                     btn = self.query_one("#btn-fix-json", Button)
                     if hasattr(self, 'broken_json_content') and self.broken_json_content == current_text:
                         btn.disabled = False
-            self.app.call_from_thread(re_enable)
+            self.call_from_thread(re_enable)
 
     def action_copy_error(self) -> None:
         if self.json_error_text:
@@ -2028,6 +2066,7 @@ class AutoAgentApp(App):
         self.last_clipboard = ""
         self.json_error_text = None
         self.broken_json_content = ""
+        self.is_loading_payload = False
         self.query_one("#status-label", Label).update("Waiting for AI...")
         self.query_one("#ai-markdown", Markdown).update("*(AI output will appear here)*")
         self.query_one("#file-list", ListView).clear()
