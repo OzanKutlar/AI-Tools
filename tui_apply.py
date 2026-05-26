@@ -1,4 +1,6 @@
 import os
+import sys
+import asyncio
 import time
 import json
 import difflib
@@ -1865,3 +1867,66 @@ class AutoAgentApp(App):
         self._disable_all_buttons()
         pyperclip.copy("")
         self.polling_timer.resume()
+
+def run_auto_agent(root_dir: str, known_files: list[str] | None = None, revert_mode: bool = False, ignore_initial_clipboard: bool = False, web_mode: bool = False):
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f_in, \
+             tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f_out:
+            in_name = f_in.name
+            out_name = f_out.name
+            
+        try:
+            args_dict = {
+                "root_dir": root_dir,
+                "known_files": known_files,
+                "revert_mode": revert_mode,
+                "ignore_initial_clipboard": ignore_initial_clipboard,
+                "web_mode": web_mode
+            }
+            with open(in_name, "w", encoding="utf-8") as f:
+                json.dump(args_dict, f)
+                
+            script_path = os.path.abspath(__file__)
+            subprocess.run([sys.executable, script_path, "auto_agent", in_name, out_name], check=True)
+            
+            if os.path.exists(out_name):
+                with open(out_name, "r", encoding="utf-8") as f:
+                    content = f.read()
+                    if content.strip():
+                        return json.loads(content)
+            return None
+        finally:
+            for p in (in_name, out_name):
+                try:
+                    if os.path.exists(p):
+                        os.remove(p)
+                except Exception:
+                    pass
+    else:
+        app = AutoAgentApp(root_dir, known_files, revert_mode, ignore_initial_clipboard, web_mode)
+        return app.run()
+
+if __name__ == "__main__":
+    if len(sys.argv) >= 4 and sys.argv[1] == "auto_agent":
+        in_path = sys.argv[2]
+        out_path = sys.argv[3]
+        
+        with open(in_path, "r", encoding="utf-8") as f_in:
+            args_dict = json.load(f_in)
+            
+        app = AutoAgentApp(
+            root_dir=args_dict.get("root_dir"),
+            known_files=args_dict.get("known_files"),
+            revert_mode=args_dict.get("revert_mode", False),
+            ignore_initial_clipboard=args_dict.get("ignore_initial_clipboard", False),
+            web_mode=args_dict.get("web_mode", False)
+        )
+        res = app.run()
+        
+        with open(out_path, "w", encoding="utf-8") as f_out:
+            json.dump(res if res is not None else {}, f_out)

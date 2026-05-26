@@ -10,7 +10,7 @@ from kanban_store import load_tasks, save_tasks, generate_id
 from cc_utils import copy_to_clipboard, safe_read_file, get_files_recursive, generate_tree_string
 from cc_prompts import DEFAULT_SYSTEM_PROMPT_TEMPLATE
 from tui_selection import run_file_selector
-from tui_apply import AutoAgentApp
+from tui_apply import run_auto_agent
 
 class TaskCreateModal(ModalScreen[dict]):
     CSS = """
@@ -319,8 +319,7 @@ class KanbanApp(App):
             self.refresh_board()
 
         with self.suspend():
-            agent_app = AutoAgentApp(self.root_dir, revert_mode=False, web_mode=False, ignore_initial_clipboard=False)
-            result = agent_app.run()
+            result = run_auto_agent(self.root_dir, revert_mode=False, web_mode=False, ignore_initial_clipboard=False)
 
         if result and "commit_message" in result:
             task["status"] = "completed"

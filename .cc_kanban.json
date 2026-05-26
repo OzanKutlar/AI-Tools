@@ -3,7 +3,22 @@
         "id": "TSK-1",
         "title": "CLI Mode",
         "description": "I want a --cli terminal argument to be added. In which case the system prompt for execution will be changed. In the apply window the user will be able to select commands to be ran. These commands will run in a pop-up window in the apply screen and the user should be able to watch the entire execution of the command.",
-        "files": [],
-        "status": "waiting"
+        "files": [
+            ".gitignore",
+            "LICENSE",
+            "README.md",
+            "cc_prompts.py",
+            "cc_utils.py",
+            "combineCopy.py",
+            "ftpapp.py",
+            "kanban_store.py",
+            "tui_apply.py",
+            "tui_confirm.py",
+            "tui_culling.py",
+            "tui_kanban.py",
+            "tui_prompt.py",
+            "tui_selection.py"
+        ],
+        "status": "in_progress"
     }
 ]
