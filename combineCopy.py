@@ -55,6 +55,7 @@ def main():
     parser.add_argument("--system", nargs='?', const='DEFAULT', default=None, help="Inject system prompt and user instructions. Optionally provide a path to a custom system prompt file.")
     parser.add_argument("--file", action="store_true", help="Save prompt to a temp file and copy the file to clipboard")
     parser.add_argument("-k", "--kanban", action="store_true", help="Launch the persistent Kanban board interface")
+    parser.add_argument("--file-culling", action="store_true", help="Enable file culling / AST selection mode")
     args = parser.parse_args()
 
     root_dir = os.getcwd()
@@ -142,7 +143,7 @@ def main():
 
         if args.select and found_files:
             console.print("[bold cyan]Phase: Manual File Selection[/bold cyan]")
-            selected = run_file_selector(root_dir, found_files)
+            selected = run_file_selector(root_dir, found_files, ast_mode=args.file_culling)
             if selected is None:
                 console.print(Panel("Selection cancelled.", title="Cancelled", style="bold yellow"))
                 return

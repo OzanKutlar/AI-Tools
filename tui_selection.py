@@ -1,4 +1,9 @@
 import os
+import sys
+import json
+import tempfile
+import asyncio
+import subprocess
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.widgets import Tree, Header, Footer, Label, Input
@@ -18,6 +23,10 @@ class SelectionTree(Tree):
         Binding("k", "cursor_up", "Up", show=False),
     ]
 
+    def on_mount(self) -> None:
+        if not getattr(self.app, "ast_mode", False):
+            self._bindings.keys.pop("i", None)
+
     def action_toggle_select(self) -> None:
         self.app.action_toggle_node()
 
@@ -33,6 +42,10 @@ class SelectionTree(Tree):
                 node.collapse()
             elif node.parent:
                 self.select_node(node.parent)
+
+    def action_toggle_important(self) -> None:
+        if getattr(self.app, "ast_mode", False):
+            self.app.action_toggle_important()
 
 class FileSelector(App):
     """Full-screen TUI for selecting which files to include."""
@@ -92,12 +105,13 @@ class FileSelector(App):
     ]
     TITLE = "CombineCopy — File Selector"
 
-    def __init__(self, root_dir: str, files: list[str]):
+    def __init__(self, root_dir: str, files: list[str], ast_mode: bool = False):
         super().__init__()
         self.root_dir = root_dir
         self.all_files = files
         self.selected_paths = set(files)
         self.search_term = ""
+        self.ast_mode = ast_mode
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -110,6 +124,8 @@ class FileSelector(App):
         self._build_tree()
         self._update_subtitle()
         self.query_one("#file-tree").focus()
+        if not self.ast_mode:
+            self._bindings.keys.pop("i", None)
 
     def on_input_changed(self, event: Input.Changed) -> None:
         self.search_term = event.value
@@ -120,10 +136,10 @@ class FileSelector(App):
         self.query_one("#file-tree").focus()
 
     @staticmethod
-    def _make_label(name: str, selected: bool, node_type: str, important: bool = False) -> Text:
+    def _make_label(name: str, selected: bool, node_type: str, important: bool = False, ast_mode: bool = False) -> Text:
         icon = "📂 " if node_type == "folder" else "📄 "
         label = Text()
-        if important:
+        if ast_mode and important:
             label.append("[FULL] ", style="bold magenta")
         elif selected:
             label.append("☑ ", style="bold green")
@@ -152,7 +168,7 @@ class FileSelector(App):
                 if i == len(parts) - 1:
                     is_selected = file_path in self.selected_paths
                     current_node.add_leaf(
-                        self._make_label(part, is_selected, "file", False),
+                        self._make_label(part, is_selected, "file", False, self.ast_mode),
                         data={"type": "file", "selected": is_selected, "important": False, "name": part, "path": file_path},
                     )
                 else:
@@ -165,7 +181,7 @@ class FileSelector(App):
                         current_node = found
                     else:
                         new_node = current_node.add(
-                            self._make_label(part, True, "folder", False),
+                            self._make_label(part, True, "folder", False, self.ast_mode),
                             data={"type": "folder", "selected": True, "important": False, "name": part},
                         )
                         current_node = new_node
@@ -190,14 +206,14 @@ class FileSelector(App):
                 
         if node.data:
             node.data["selected"] = all_selected
-            node.set_label(self._make_label(node.data["name"], all_selected, node.data["type"], node.data.get("important", False)))
+            node.set_label(self._make_label(node.data["name"], all_selected, node.data["type"], node.data.get("important", False), self.ast_mode))
         return all_selected
 
     def _set_selected(self, node, selected: bool) -> None:
         if node.data is None:
             return
         node.data["selected"] = selected
-        node.set_label(self._make_label(node.data["name"], selected, node.data["type"], node.data.get("important", False)))
+        node.set_label(self._make_label(node.data["name"], selected, node.data["type"], node.data.get("important", False), self.ast_mode))
         for child in node.children:
             self._set_selected(child, selected)
 
@@ -205,7 +221,7 @@ class FileSelector(App):
         if node.data is None:
             return
         node.data["important"] = important
-        node.set_label(self._make_label(node.data["name"], node.data.get("selected", False), node.data["type"], important))
+        node.set_label(self._make_label(node.data["name"], node.data.get("selected", False), node.data["type"], important, self.ast_mode))
         for child in node.children:
             self._set_important(child, important)
 
@@ -235,7 +251,7 @@ class FileSelector(App):
                         break
             if parent.data.get("selected") != all_selected:
                 parent.data["selected"] = all_selected
-                parent.set_label(self._make_label(parent.data["name"], all_selected, parent.data["type"], parent.data.get("important", False)))
+                parent.set_label(self._make_label(parent.data["name"], all_selected, parent.data["type"], parent.data.get("important", False), self.ast_mode))
                 parent = parent.parent
             else:
                 break
@@ -246,7 +262,9 @@ class FileSelector(App):
         if node.data and node.data["type"] == "file":
             if node.data.get("selected"):
                 selected.append(node.data["path"])
-            if node.data.get("important"):
+                if not self.ast_mode:
+                    important.append(node.data["path"])
+            if self.ast_mode and node.data.get("important"):
                 important.append(node.data["path"])
         for child in node.children:
             c_sel, c_imp = self._collect_selected(child)
@@ -288,6 +306,8 @@ class FileSelector(App):
         self._update_subtitle()
 
     def action_toggle_important(self) -> None:
+        if not self.ast_mode:
+            return
         tree = self.query_one("#file-tree", SelectionTree)
         node = tree.cursor_node
         if not node or not node.data:
@@ -325,7 +345,54 @@ class FileSelector(App):
     def action_cancel(self) -> None:
         self.exit(None)
 
-def run_file_selector(root_dir: str, files: list[str]):
+def run_file_selector(root_dir: str, files: list[str], ast_mode: bool = False):
     """Launch the file-selector TUI. Returns selected paths, or None if cancelled."""
-    app = FileSelector(root_dir, files)
-    return app.run()
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f_in, \
+             tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f_out:
+            in_name = f_in.name
+            out_name = f_out.name
+            
+        try:
+            with open(in_name, "w", encoding="utf-8") as f:
+                json.dump(files, f)
+                
+            script_path = os.path.abspath(__file__)
+            subprocess.run([sys.executable, script_path, root_dir, in_name, out_name, str(ast_mode)], check=True)
+            
+            if os.path.exists(out_name):
+                with open(out_name, "r", encoding="utf-8") as f:
+                    content = f.read()
+                    if content.strip():
+                        return json.loads(content)
+            return None
+        finally:
+            for p in (in_name, out_name):
+                try:
+                    os.remove(p)
+                except Exception:
+                    pass
+    else:
+        app = FileSelector(root_dir, files, ast_mode=ast_mode)
+        return app.run()
+
+if __name__ == "__main__":
+    if len(sys.argv) >= 5:
+        r_dir = sys.argv[1]
+        in_path = sys.argv[2]
+        out_path = sys.argv[3]
+        a_mode = sys.argv[4].lower() == "true"
+        
+        with open(in_path, "r", encoding="utf-8") as f_in:
+            f_list = json.load(f_in)
+            
+        app = FileSelector(r_dir, f_list, ast_mode=a_mode)
+        res = app.run()
+        
+        with open(out_path, "w", encoding="utf-8") as f_out:
+            json.dump(res, f_out)
