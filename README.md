@@ -4,9 +4,10 @@ A repository of terminal user interface (TUI) utility tools that interact with A
 
 ## Overview of Tools
 
-This project consists of two primary Python-based utilities designed for AI-assisted development and remote deployments:
+This project consists of three primary Python-based utilities designed for AI-assisted development and remote deployments:
 1. **`combineCopy.py`**: A workspace context assembler, file selector, local Kanban board, and automated clipboard-based AI execution agent.
 2. **`ftpapp.py`**: A Git-integrated FTP deployment tool to synchronize workspace changes to a remote hosting environment.
+3. **`webapp.py`**: A Git-integrated keyboard-emulation apply tool to automate transferring file changes to browser-based editors/IDEs.
 
 ---
 
@@ -54,3 +55,19 @@ This project consists of two primary Python-based utilities designed for AI-assi
 - `-p, --password`: FTP credentials login password.
 - `-c, --commit`: Commit hash or revision baseline to run diff against.
 - `-r, --repo-loc`: Target root directory on the remote server (e.g., `/httpdocs/`).
+
+---
+
+## 3. webapp.py (Git-to-Web Apply & Keyboard Macro Emulation)
+
+`webapp.py` is an apply utility designed to automate uploading workspace updates directly into browser-based text editors or IDEs. Instead of copy-pasting code by hand, it uses keyboard macros to select all text and overwrite the contents with your local changes.
+
+### Key Features
+- **Git-Integrated Delta Detection**: Identifies modifications, additions, and deletions relative to a selected baseline commit hash or git reference.
+- **Keyboard-Emulated Apply Sequence**: Uses system-level hooks via the `keyboard` module to capture a global hotkey (e.g., `+`). When triggered, it copies the active file's code to the clipboard, clears the active input (`Ctrl+A`), and pastes (`Ctrl+V`).
+- **Auto-Advancing Status Queue**: Tracks active file transfers and progresses to the next file sequentially inside the interactive TUI environment.
+- **Manual Action Override**: Offers keyboard options inside the TUI to skip (`s`), force-complete (`f`), or go back (`p`) to the previous item in the queue.
+
+### Common Options
+- `-c, --commit`: Git commit hash or reference to diff against.
+- `-k, --hotkey`: Custom trigger sequence (defaults to `+` / Numpad Plus).
