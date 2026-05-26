@@ -30,6 +30,11 @@ from cc_utils import safe_read_file
 def get_changed_files(commit_hash: str) -> list[dict]:
     """Extracts Added, Modified, and Deleted files using git diff against HEAD."""
     try:
+        try:
+            repo_root = subprocess.check_output(['git', 'rev-parse', '--show-toplevel'], text=True).strip()
+        except Exception:
+            repo_root = ""
+            
         # Use -z for null-separated output to safely handle spaces and special characters
         out = subprocess.check_output(
             ['git', 'diff', '-z', '--no-renames', '--name-status', '--diff-filter=AMD', commit_hash, 'HEAD'],
@@ -49,11 +54,13 @@ def get_changed_files(commit_hash: str) -> list[dict]:
             if not status or not filepath:
                 continue
                 
+            abs_path = os.path.join(repo_root, filepath) if repo_root else filepath
+                
             if status == 'D':
-                files.append({"path": filepath, "action": "delete"})
+                files.append({"path": filepath, "abs_path": abs_path, "action": "delete"})
             elif status in ('A', 'M'):
-                if os.path.exists(filepath):
-                    files.append({"path": filepath, "action": "apply"})
+                if os.path.exists(abs_path):
+                    files.append({"path": filepath, "abs_path": abs_path, "action": "apply"})
         return files
     except subprocess.CalledProcessError as e:
         print(f"Git error resolving commit {commit_hash}: {e.output.decode('utf-8', errors='replace')}")
@@ -401,7 +408,7 @@ class WebApp(App):
             preview.write(f"File to delete: {file_info['path']}")
             preview.write("Please delete this file manually in your web interface, then press [bold]f[/bold] to mark as completed.")
         else:
-            content = safe_read_file(file_info["path"])
+            content = safe_read_file(file_info.get("abs_path", file_info["path"]))
             preview.write(content)
 
     def on_hotkey(self) -> None:
@@ -416,7 +423,7 @@ class WebApp(App):
             return
             
         # Extract file contents
-        content = safe_read_file(file_info["path"])
+        content = safe_read_file(file_info.get("abs_path", file_info["path"]))
         
         # Handle clipboard operation in a safe background context if needed
         try:
