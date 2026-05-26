@@ -30,27 +30,33 @@ from cc_utils import safe_read_file
 def get_changed_files(commit_hash: str) -> list[dict]:
     """Extracts Added, Modified, and Deleted files using git diff against HEAD."""
     try:
+        # Use -z for null-separated output to safely handle spaces and special characters
         out = subprocess.check_output(
-            ['git', 'diff', '--no-renames', '--name-status', '--diff-filter=AMD', commit_hash, 'HEAD'],
-            text=True,
+            ['git', 'diff', '-z', '--no-renames', '--name-status', '--diff-filter=AMD', commit_hash, 'HEAD'],
             stderr=subprocess.STDOUT
         )
+        
+        out_text = out.decode('utf-8', errors='replace')
+        parts = out_text.split('\0')
+        
         files = []
-        for line in out.strip().split('\n'):
-            if not line: continue
-            parts = line.split('\t')
-            if len(parts) >= 2:
-                status = parts[0]
-                filepath = parts[-1]
+        i = 0
+        while i < len(parts) - 1:
+            status = parts[i]
+            filepath = parts[i+1]
+            i += 2
+            
+            if not status or not filepath:
+                continue
                 
-                if status == 'D':
-                    files.append({"path": filepath, "action": "delete"})
-                elif status in ('A', 'M'):
-                    if os.path.exists(filepath):
-                        files.append({"path": filepath, "action": "apply"})
+            if status == 'D':
+                files.append({"path": filepath, "action": "delete"})
+            elif status in ('A', 'M'):
+                if os.path.exists(filepath):
+                    files.append({"path": filepath, "action": "apply"})
         return files
     except subprocess.CalledProcessError as e:
-        print(f"Git error resolving commit {commit_hash}: {e.output}")
+        print(f"Git error resolving commit {commit_hash}: {e.output.decode('utf-8', errors='replace')}")
         sys.exit(1)
     except FileNotFoundError:
         print("Error: Git is not installed or not in PATH.")
@@ -497,9 +503,8 @@ def main():
     elif not initial_args.get("hotkey"):
         initial_args["hotkey"] = "+"
         
-    if not initial_args.get("commit") and "commit" in saved_config:
-        initial_args["commit"] = saved_config["commit"]
-
+    # Explicitly do NOT load 'commit' from config to determine missing_args,
+    # ensuring the Setup TUI always shows up so the user can pick a fresh baseline (matching ftpapp behavior).
     missing_args = not initial_args.get("commit")
     
     if missing_args:
