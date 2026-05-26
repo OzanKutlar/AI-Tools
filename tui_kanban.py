@@ -101,6 +101,7 @@ class KanbanApp(App):
         self.root_dir = root_dir
         self.tasks = load_tasks(root_dir)
         self.STATUSES = ["waiting", "selecting", "in_progress", "completed"]
+        self.action_logs = []
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -185,6 +186,7 @@ class KanbanApp(App):
                     "status": "waiting"
                 }
                 self.tasks.append(new_task)
+                self.action_logs.append(f"Created Task [bold cyan]{new_task['id']}[/bold cyan] ({new_task['title']})")
                 self.refresh_board()
         self.push_screen(TaskCreateModal(), check_create)
 
@@ -192,6 +194,7 @@ class KanbanApp(App):
         task = self.get_focused_task()
         if task:
             self.tasks.remove(task)
+            self.action_logs.append(f"Deleted Task [bold red]{task['id']}[/bold red]")
             self.refresh_board()
 
     def action_move_right(self) -> None:
@@ -200,6 +203,7 @@ class KanbanApp(App):
             idx = self.STATUSES.index(task["status"])
             if idx < len(self.STATUSES) - 1:
                 task["status"] = self.STATUSES[idx + 1]
+                self.action_logs.append(f"Moved Task [bold cyan]{task['id']}[/bold cyan] to {task['status'].upper()}")
                 self.refresh_board()
 
     def action_move_left(self) -> None:
@@ -208,6 +212,7 @@ class KanbanApp(App):
             idx = self.STATUSES.index(task["status"])
             if idx > 0:
                 task["status"] = self.STATUSES[idx - 1]
+                self.action_logs.append(f"Moved Task [bold cyan]{task['id']}[/bold cyan] to {task['status'].upper()}")
                 self.refresh_board()
 
     def action_select_files(self) -> None:
@@ -227,6 +232,9 @@ class KanbanApp(App):
             task["files"] = rel_paths
             if task["status"] == "waiting":
                 task["status"] = "selecting"
+            
+            file_names = ", ".join([os.path.basename(p) for p in rel_paths]) if rel_paths else "None"
+            self.action_logs.append(f"Selected files '{file_names}' for Task [bold cyan]{task['id']}[/bold cyan]")
             self.refresh_board()
             self.update_details()
 
@@ -242,6 +250,7 @@ class KanbanApp(App):
             if err:
                 task["recall_error"] = err
                 task["status"] = "in_progress"
+                self.action_logs.append(f"Recalled Task [bold yellow]{task['id']}[/bold yellow] due to error")
                 self.refresh_board()
                 self.notify("Task recalled and moved back to In Progress.")
         self.push_screen(TaskRecallModal(), check_recall)
@@ -327,5 +336,15 @@ class KanbanApp(App):
                 task["commit_hash"] = result["commit_hash"]
             if "recall_error" in task:
                 del task["recall_error"]
+            
+            applied_files = [f.get("path", "unknown") for f in result.get("files", []) if f.get("_status") == "applied"]
+            if applied_files:
+                file_names = ", ".join([os.path.basename(p) for p in applied_files])
+                self.action_logs.append(f"Modified files '{file_names}' for Task [bold cyan]{task['id']}[/bold cyan]")
+            
+            self.action_logs.append(f"Completed Task [bold green]{task['id']}[/bold green]")
             self.refresh_board()
             self.notify("Task marked as Completed!", severity="success")
+
+    def action_quit(self) -> None:
+        self.exit(getattr(self, "action_logs", []))

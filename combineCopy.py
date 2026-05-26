@@ -93,7 +93,13 @@ def main():
 
     if args.kanban:
         app = KanbanApp(root_dir)
-        app.run()
+        logs = app.run()
+        if logs:
+            console.print()
+            console.print(Rule("[bold blue]Kanban Session Summary[/bold blue]"))
+            for log_msg in logs:
+                console.print(f"  • {log_msg}")
+            console.print()
         return
 
     if (args.auto or args.revert or args.orchestrate) and not (args.select or args.file_types or args.specific_file or args.system is not None):
