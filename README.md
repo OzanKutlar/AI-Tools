@@ -15,7 +15,8 @@ This repository contains two primary Python-based utility tools designed to simp
 
 ### Key Features
 - **Context Assembly**: Recursively scans directories to collect source files, filtering by file extensions and ignoring standard dependency folders (such as `.git`, `node_modules`, `.venv`, etc.).
-- **Interactive TUI File Selector**: Launches a terminal user interface (TUI) allowing developers to select or deselect specific files, perform search queries, and view selected file counts before packaging.
+- **Interactive TUI File Selector**: Launches a terminal user interface (TUI) allowing developers to select or deselect specific files, perform search queries, and view selected file counts before packaging. Includes AST mapping to cull unnecessary file context.
+- **Local Kanban Board**: Built-in TUI Kanban board to track tasks, attach specific context files, and dispatch them to the AI continuously.
 - **Continuous AI Execution Agent**: Monitors the system clipboard for formatted JSON instruction payloads returned from an AI agent. It can execute local workspace changes:
   - **Create**: Add complete, functional new files.
   - **Modify**: Update files using exact/fuzzy search-and-replace blocks, or regex-based replacement rules.
@@ -30,7 +31,10 @@ This repository contains two primary Python-based utility tools designed to simp
 - `-e, --exclude`: List of space-separated directory names to exclude.
 - `-s, --select`: Open the interactive TUI selector to pick files.
 - `-a, --auto`: Run in continuous clipboard-monitoring execution mode.
+- `-r, --revert`: Run in continuous AI listener mode but reverse all changes.
 - `-o, --orchestrate`: Run in orchestrator planning mode to produce execution prompts.
+- `-k, --kanban`: Launch the persistent Kanban board interface.
+- `--file-culling`: Enable file culling / AST selection mode.
 - `-b, --batches`: Configure batch counts for copying large workspace contexts.
 - `--web`: Enable keyboard macro emulation mode for web IDE targets.
 

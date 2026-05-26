@@ -25,7 +25,10 @@ class SelectionTree(Tree):
 
     def on_mount(self) -> None:
         if not getattr(self.app, "ast_mode", False):
-            self._bindings.keys.pop("i", None)
+            if hasattr(self, "unbind"):
+                self.unbind("i")
+            elif hasattr(self._bindings, "keys"):
+                self._bindings.keys.pop("i", None)
 
     def action_toggle_select(self) -> None:
         self.app.action_toggle_node()
@@ -125,7 +128,10 @@ class FileSelector(App):
         self._update_subtitle()
         self.query_one("#file-tree").focus()
         if not self.ast_mode:
-            self._bindings.keys.pop("i", None)
+            if hasattr(self, "unbind"):
+                self.unbind("i")
+            elif hasattr(self._bindings, "keys"):
+                self._bindings.keys.pop("i", None)
 
     def on_input_changed(self, event: Input.Changed) -> None:
         self.search_term = event.value
