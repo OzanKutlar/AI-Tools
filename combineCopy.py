@@ -92,7 +92,7 @@ def main():
     all_known_files = []
 
     if args.kanban:
-        app = KanbanApp(root_dir)
+        app = KanbanApp(root_dir, cli_mode=args.cli)
         logs = app.run()
         if logs:
             console.print()
@@ -102,9 +102,9 @@ def main():
             console.print()
         return
 
-    if (args.auto or args.revert or args.orchestrate) and not (args.select or args.file_types or args.specific_file or args.system is not None):
+    if (args.auto or args.revert or args.orchestrate) and not (args.select or args.file_types or args.specific_file or args.system is not None or args.cli):
         if args.orchestrate:
-            app = OrchestratorAgentApp(root_dir, use_file_clipboard=args.file)
+            app = OrchestratorAgentApp(root_dir, use_file_clipboard=args.file, cli_mode=args.cli)
             result = app.run()
             if result:
                 console.print(Panel("Orchestrator payload successfully copied to clipboard.", title="Success", style="bold green"))
@@ -177,7 +177,7 @@ def main():
         display_summary(root_dir, max_depth, ext_filters, batch_count, total_files)
     
         user_request_data = None
-        if args.system is not None:
+        if args.system is not None or args.cli:
             console.print("[bold cyan]Phase: Instruction & System Prompt[/bold cyan]")
             sys_arg = args.system if args.system else 'DEFAULT'
             if sys_arg == 'DEFAULT' or sys_arg == '':
@@ -326,7 +326,7 @@ def main():
     if args.auto or args.revert or args.orchestrate:
         if args.orchestrate:
             console.print(f"\n[bold cyan]Phase: Orchestrator Agent Execution[/bold cyan]")
-            app = OrchestratorAgentApp(root_dir, use_file_clipboard=args.file)
+            app = OrchestratorAgentApp(root_dir, use_file_clipboard=args.file, cli_mode=args.cli)
             result = app.run()
             if result:
                 console.print(Panel("Orchestrator payload successfully copied to clipboard.", title="Success", style="bold green"))

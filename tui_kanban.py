@@ -8,7 +8,7 @@ from textual.screen import ModalScreen
 
 from kanban_store import load_tasks, save_tasks, generate_id
 from cc_utils import copy_to_clipboard, safe_read_file, get_files_recursive, generate_tree_string
-from cc_prompts import DEFAULT_SYSTEM_PROMPT_TEMPLATE
+from cc_prompts import DEFAULT_SYSTEM_PROMPT_TEMPLATE, CLI_SYSTEM_PROMPT_TEMPLATE
 from tui_selection import run_file_selector
 from tui_apply import run_auto_agent
 
@@ -96,9 +96,10 @@ class KanbanApp(App):
         Binding("escape", "quit", "Quit")
     ]
 
-    def __init__(self, root_dir: str):
+    def __init__(self, root_dir: str, cli_mode: bool = False):
         super().__init__()
         self.root_dir = root_dir
+        self.cli_mode = cli_mode
         self.tasks = load_tasks(root_dir)
         self.STATUSES = ["waiting", "selecting", "in_progress", "completed"]
         self.action_logs = []
@@ -280,7 +281,8 @@ class KanbanApp(App):
                     buffer.append(f"[Could not retrieve diff for {task['commit_hash']}: {e}]")
 
         buffer.append("\n--- SYSTEM INSTRUCTIONS ---")
-        buffer.append(DEFAULT_SYSTEM_PROMPT_TEMPLATE.replace('{FILE_CULLING_INSTRUCTION}\n', '').replace('{FILE_CULLING_INSTRUCTION}', ''))
+        sys_tmpl = CLI_SYSTEM_PROMPT_TEMPLATE if getattr(self, 'cli_mode', False) else DEFAULT_SYSTEM_PROMPT_TEMPLATE
+        buffer.append(sys_tmpl.replace('{FILE_CULLING_INSTRUCTION}\n', '').replace('{FILE_CULLING_INSTRUCTION}', ''))
         
         buffer.append("\n--- DIRECTORY AST MAP ---")
         all_files = get_files_recursive(self.root_dir, 0, 10, None)

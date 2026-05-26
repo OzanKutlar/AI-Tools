@@ -33,7 +33,7 @@ from cc_utils import (
     copy_file_to_clipboard
 )
 
-from cc_prompts import DEFAULT_SYSTEM_PROMPT_TEMPLATE
+from cc_prompts import DEFAULT_SYSTEM_PROMPT_TEMPLATE, CLI_SYSTEM_PROMPT_TEMPLATE
 
 class CommandExecutionScreen(ModalScreen[bool]):
     CSS = """
@@ -845,10 +845,11 @@ class OrchestratorAgentApp(App):
     ]
     TITLE = "CombineCopy — Orchestrator Listener"
 
-    def __init__(self, root_dir: str, use_file_clipboard: bool = False):
+    def __init__(self, root_dir: str, use_file_clipboard: bool = False, cli_mode: bool = False):
         super().__init__()
         self.root_dir = root_dir
         self.use_file_clipboard = use_file_clipboard
+        self.cli_mode = cli_mode
         self.payload = None
         self.last_clipboard = ""
         self.polling_timer = None
@@ -1037,7 +1038,8 @@ class OrchestratorAgentApp(App):
         buffer.append(final_prompt_text)
         buffer.append("\n--- SYSTEM INSTRUCTIONS ---")
         
-        sys_prompt = DEFAULT_SYSTEM_PROMPT_TEMPLATE.replace('{FILE_CULLING_INSTRUCTION}\n', '').replace('{FILE_CULLING_INSTRUCTION}', '')
+        sys_tmpl = CLI_SYSTEM_PROMPT_TEMPLATE if getattr(self, 'cli_mode', False) else DEFAULT_SYSTEM_PROMPT_TEMPLATE
+        sys_prompt = sys_tmpl.replace('{FILE_CULLING_INSTRUCTION}\n', '').replace('{FILE_CULLING_INSTRUCTION}', '')
         buffer.append(sys_prompt)
         buffer.append("\n--- USER REQUEST ---")
         buffer.append(final_prompt_text)
