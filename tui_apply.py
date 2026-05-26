@@ -35,6 +35,93 @@ from cc_utils import (
 
 from cc_prompts import DEFAULT_SYSTEM_PROMPT_TEMPLATE
 
+class CommandExecutionScreen(ModalScreen[bool]):
+    CSS = """
+    CommandExecutionScreen {
+        align: center middle;
+        background: rgba(0, 0, 0, 0.8);
+    }
+    #cmd-dialog {
+        width: 80%;
+        height: 80%;
+        border: solid #d08c60;
+        background: #2d2825;
+        padding: 1 2;
+    }
+    .cmd-title {
+        text-align: center;
+        text-style: bold;
+        color: #d08c60;
+        margin-bottom: 1;
+    }
+    #cmd-log {
+        height: 1fr;
+        border: solid #5a4d45;
+        background: #1e1a18;
+        margin-bottom: 1;
+    }
+    #cmd-buttons {
+        height: 3;
+        align: right middle;
+    }
+    Button {
+        margin: 0 1;
+    }
+    """
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel/Close"),
+    ]
+
+    def __init__(self, command: str, root_dir: str):
+        super().__init__()
+        self.command = command
+        self.root_dir = root_dir
+        self.process = None
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="cmd-dialog"):
+            yield Label(f"Executing: {self.command}", classes="cmd-title")
+            yield RichLog(id="cmd-log", highlight=True, wrap=True)
+            with Horizontal(id="cmd-buttons"):
+                yield Button("Close", id="btn-cmd-close", variant="primary", disabled=True)
+
+    async def on_mount(self) -> None:
+        self.run_worker(self.execute_command(), exclusive=True)
+
+    async def execute_command(self) -> None:
+        log = self.query_one("#cmd-log", RichLog)
+        try:
+            self.process = await asyncio.create_subprocess_shell(
+                self.command,
+                cwd=self.root_dir,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT
+            )
+            while True:
+                line = await self.process.stdout.readline()
+                if not line:
+                    break
+                decoded_line = line.decode('utf-8', errors='replace').rstrip('\r\n')
+                log.write(decoded_line)
+            
+            await self.process.wait()
+            log.write(f"\n[Process exited with code {self.process.returncode}]")
+        except Exception as e:
+            log.write(f"\n[Error executing command: {e}]")
+        
+        self.query_one("#btn-cmd-close", Button).disabled = False
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-cmd-close":
+            success = self.process and self.process.returncode == 0
+            self.dismiss(success)
+
+    def action_cancel(self) -> None:
+        btn = self.query_one("#btn-cmd-close", Button)
+        if not btn.disabled:
+            success = self.process and self.process.returncode == 0
+            self.dismiss(success)
+
 class HumanCorrectScreen(ModalScreen[str]):
     CSS = """
     HumanCorrectScreen {
@@ -230,6 +317,8 @@ class MacroScreen(ModalScreen):
                 self.steps.append({"type": "CREATE", "path": path, "content": file_obj.get("content", ""), "file_idx": idx})
             elif action == "DELETE":
                 self.steps.append({"type": "DELETE", "path": path, "file_idx": idx})
+            elif action == "COMMAND":
+                self.steps.append({"type": "COMMAND", "command": file_obj.get("command", ""), "file_idx": idx})
             elif action == "MODIFY":
                 if "content" in file_obj:
                     self.steps.append({"type": "CREATE", "path": path, "content": file_obj["content"], "file_idx": idx, "desc": "Overwrite file"})
@@ -293,6 +382,11 @@ class MacroScreen(ModalScreen):
         elif stype == "DELETE":
             action_text = f"Action: Delete File"
             trigger_hint = "Please delete the file manually, then press [bold green]Enter[/bold green] here."
+        elif stype == "COMMAND":
+            self.query_one("#macro-file", Label).update(f"Command: [bold cyan]{step['command']}[/bold cyan]")
+            action_text = f"Action: Run Command manually"
+            text_to_show = step.get("command", "")
+            trigger_hint = "Run this command manually in your environment, then press [bold green]Enter[/bold green] here."
         elif stype == "MODIFY_WEB":
             if step.get("sub_state") == "WAITING_COPY":
                 action_text = "[yellow]Action: COPY ENTIRE FILE[/yellow]"
@@ -386,6 +480,8 @@ class MacroScreen(ModalScreen):
                 pyperclip.copy(step["content"])
                 time.sleep(0.1)
                 keyboard.send('ctrl+v')
+            elif step["type"] == "COMMAND":
+                pyperclip.copy(step["command"])
         except Exception:
             pass
         self.app.call_from_thread(self._advance)
@@ -1254,6 +1350,13 @@ class AutoAgentApp(App):
 
     def _validate_file_obj(self, file_obj: dict) -> None:
         action = file_obj.get("action", "modify").upper()
+        if action == "COMMAND":
+            if "command" not in file_obj:
+                file_obj["_errors"] = ["Missing 'command' key for COMMAND action."]
+            else:
+                file_obj["_errors"] = []
+            return
+            
         path = file_obj.get("path", "unknown")
         full_path = os.path.join(self.root_dir, path)
         errors = []
@@ -1351,7 +1454,9 @@ class AutoAgentApp(App):
             data["commit_message"] = "Revert: " + data.get("commit_message", "")
             for file_obj in data.get("files", []):
                 action = file_obj.get("action", "modify").lower()
-                if action == "create":
+                if action == "command":
+                    file_obj["_revert_warning"] = "Commands cannot be automatically reverted. Please verify manually."
+                elif action == "create":
                     file_obj["action"] = "delete"
                 elif action == "delete":
                     file_obj["action"] = "create"
@@ -1405,7 +1510,10 @@ class AutoAgentApp(App):
         file_list.clear()
         for idx, file_obj in enumerate(self.payload.get("files", [])):
             action = file_obj.get("action", "modify").upper()
-            path = file_obj.get("path", "unknown")
+            if action == "COMMAND":
+                path = file_obj.get("command", "unknown command")
+            else:
+                path = file_obj.get("path", "unknown")
             status = file_obj.get("_status", "pending")
             errors = file_obj.get("_errors", [])
             warnings = file_obj.get("_warnings", [])
@@ -1451,16 +1559,31 @@ class AutoAgentApp(App):
         if file_list.index is not None and file_list.index < len(files):
             selected_file = files[file_list.index]
             is_pending = selected_file.get("_status") == "pending"
+            action = selected_file.get("action", "").upper()
+            
             self.query_one("#btn-apply-file", Button).disabled = not is_pending
-            self.query_one("#btn-partial-add", Button).disabled = not is_pending
+            
+            if action == "COMMAND":
+                if self.query("Button#btn-partial-add"):
+                    self.query_one("#btn-partial-add", Button).disabled = True
+                if self.query("Button#btn-open-meld"):
+                    self.query_one("#btn-open-meld", Button).disabled = True
+                if self.query("Button#btn-human-correct"):
+                    self.query_one("#btn-human-correct", Button).disabled = True
+            else:
+                if self.query("Button#btn-partial-add"):
+                    self.query_one("#btn-partial-add", Button).disabled = not is_pending
+                if self.query("Button#btn-open-meld"):
+                    self.query_one("#btn-open-meld", Button).disabled = not is_pending
+                has_candidates = False
+                for block in selected_file.get("search_replace", []):
+                    if "_candidates" in block:
+                        has_candidates = True
+                        break
+                if self.query("Button#btn-human-correct"):
+                    self.query_one("#btn-human-correct", Button).disabled = not (is_pending and has_candidates)
+                    
             self.query_one("#btn-discard-file", Button).disabled = not is_pending
-            self.query_one("#btn-open-meld", Button).disabled = not is_pending
-            has_candidates = False
-            for block in selected_file.get("search_replace", []):
-                if "_candidates" in block:
-                    has_candidates = True
-                    break
-            self.query_one("#btn-human-correct", Button).disabled = not (is_pending and has_candidates)
         else:
             self.query_one("#btn-apply-file", Button).disabled = True
             if self.query("Button#btn-partial-add"):
@@ -1492,6 +1615,19 @@ class AutoAgentApp(App):
         if not self.payload or idx < 0 or idx >= len(self.payload.get("files", [])): return
         self._update_buttons()
         file_obj = self.payload["files"][idx]
+        action = file_obj.get("action", "").upper()
+        
+        if action == "COMMAND":
+            header_text = Text()
+            header_text.append("Command: ", style="bold cyan")
+            header_text.append(file_obj.get("command", ""), style="bold yellow")
+            self.query_one("#file-header", Label).update(header_text)
+            
+            diff_view = self.query_one("#diff-view", RichLog)
+            diff_view.clear()
+            diff_view.write(Text("This is a CLI command. Click 'Apply File' to execute it.", style="bold cyan"))
+            return
+            
         path = file_obj.get("path")
         dirname = os.path.dirname(path)
         filename = os.path.basename(path)
@@ -1559,11 +1695,22 @@ class AutoAgentApp(App):
         if not btn.disabled:
             file_list = self.query_one("#file-list", ListView)
             if file_list.index is not None:
-                if self.web_mode:
+                file_obj = self.payload["files"][file_list.index]
+                if file_obj.get("action", "").upper() == "COMMAND":
+                    self.app.push_screen(
+                        CommandExecutionScreen(file_obj.get("command", ""), self.root_dir),
+                        callback=lambda success: self.on_command_done(file_list.index, success)
+                    )
+                elif self.web_mode:
                     self.app.push_screen(MacroScreen(self.payload, [file_list.index]), self.on_macro_done)
                 else:
                     self._apply_single_file(file_list.index)
                     self.refresh_file_list()
+
+    def on_command_done(self, idx: int, success: bool) -> None:
+        self.payload["files"][idx]["_status"] = "applied"
+        self.refresh_file_list()
+        self._check_auto_reset()
 
     def action_partial_add(self) -> None:
         btn = self.query_one("#btn-partial-add", Button)
@@ -1612,9 +1759,28 @@ class AutoAgentApp(App):
             if self.web_mode:
                 self.app.push_screen(MacroScreen(self.payload, pending_indices), self.on_macro_done)
             else:
-                for i in pending_indices:
-                    self._apply_single_file(i)
-                self.refresh_file_list()
+                self._apply_next_pending(pending_indices)
+
+    def _apply_next_pending(self, indices: list[int]) -> None:
+        if not indices:
+            self.refresh_file_list()
+            self._check_auto_reset()
+            return
+        
+        idx = indices.pop(0)
+        file_obj = self.payload["files"][idx]
+        if file_obj.get("action", "").upper() == "COMMAND":
+            self.app.push_screen(
+                CommandExecutionScreen(file_obj.get("command", ""), self.root_dir),
+                callback=lambda success: self._on_apply_all_command_done(idx, success, indices)
+            )
+        else:
+            self._apply_single_file(idx)
+            self._apply_next_pending(indices)
+
+    def _on_apply_all_command_done(self, idx: int, success: bool, remaining_indices: list[int]) -> None:
+        self.payload["files"][idx]["_status"] = "applied"
+        self._apply_next_pending(remaining_indices)
 
     def on_macro_done(self, completed_indices: list[int] | None) -> None:
         if completed_indices:
@@ -1798,6 +1964,9 @@ class AutoAgentApp(App):
     def _apply_single_file(self, idx: int) -> None:
         file_obj = self.payload["files"][idx]
         action = file_obj.get("action", "").lower()
+        if action == "command":
+            file_obj["_status"] = "applied"
+            return
         path = file_obj.get("path")
         full_path = os.path.join(self.root_dir, path)
         if action == "delete":

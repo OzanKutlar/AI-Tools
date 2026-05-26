@@ -31,7 +31,8 @@ from cc_utils import (
 
 from cc_prompts import (
     ORCHESTRATE_SYSTEM_PROMPT_TEMPLATE,
-    DEFAULT_SYSTEM_PROMPT_TEMPLATE
+    DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+    CLI_SYSTEM_PROMPT_TEMPLATE
 )
 
 from tui_selection import run_file_selector
@@ -51,6 +52,7 @@ def main():
     parser.add_argument("-a", "--auto", action="store_true", help="Run in continuous AI listener mode")
     parser.add_argument("-r", "--revert", action="store_true", help="Run in continuous AI listener mode but reverse all changes")
     parser.add_argument("-o", "--orchestrate", action="store_true", help="Run in orchestrator mode to generate a precise execution plan and prompt.")
+    parser.add_argument("--cli", action="store_true", help="Enable CLI Mode. Allows the AI to output terminal commands to be executed.")
     parser.add_argument("--web", action="store_true", help="Enable web macro mode. Translates applies into simulated keyboard strokes for web IDEs.")
     parser.add_argument("--system", nargs='?', const='DEFAULT', default=None, help="Inject system prompt and user instructions. Optionally provide a path to a custom system prompt file.")
     parser.add_argument("--file", action="store_true", help="Save prompt to a temp file and copy the file to clipboard")
@@ -175,6 +177,8 @@ def main():
             if sys_arg == 'DEFAULT' or sys_arg == '':
                 if args.orchestrate:
                     sys_prompt_text = ORCHESTRATE_SYSTEM_PROMPT_TEMPLATE.strip()
+                elif args.cli:
+                    sys_prompt_text = CLI_SYSTEM_PROMPT_TEMPLATE.strip()
                 else:
                     sys_prompt_text = DEFAULT_SYSTEM_PROMPT_TEMPLATE.strip()
             else:

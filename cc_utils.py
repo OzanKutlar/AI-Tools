@@ -275,12 +275,17 @@ def print_auto_summary(result: dict) -> None:
         
     for f in applied_files:
         action = f.get("action", "modify").lower()
-        path = f.get("path", "Unknown")
-        if action == "create":
+        if action == "command":
+            command = f.get("command", "Unknown")
+            console.print(f"  [bold magenta]>[/bold magenta] [magenta]Ran Command[/magenta] [bold]{command}[/bold]")
+        elif action == "create":
+            path = f.get("path", "Unknown")
             console.print(f"  [bold green]✓[/bold green] [green]Created File[/green] [bold]{path}[/bold]")
         elif action == "delete":
+            path = f.get("path", "Unknown")
             console.print(f"  [bold red]✗[/bold red] [red]Deleted File[/red] [bold]{path}[/bold]")
         else:
+            path = f.get("path", "Unknown")
             added = f.get("_added", 0)
             removed = f.get("_removed", 0)
             diff_str = f" [bold green]+{added}[/bold green] [bold red]-{removed}[/bold red]" if (added > 0 or removed > 0) else ""
