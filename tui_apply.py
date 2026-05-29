@@ -1180,6 +1180,7 @@ class AutoAgentApp(App):
         self.json_error_text = None
         self.broken_json_content = ""
         self.is_loading_payload = False
+        self.session_applied_files = []
         if self.revert_mode:
             self.title = "CombineCopy — Auto Agent Listener (REVERT MODE)"
         if self.web_mode:
@@ -1749,6 +1750,7 @@ class AutoAgentApp(App):
 
     def on_command_done(self, idx: int, success: bool) -> None:
         self.payload["files"][idx]["_status"] = "applied"
+        self._record_applied_file(self.payload["files"][idx])
         self.refresh_file_list()
         self._check_auto_reset()
 
@@ -1820,12 +1822,14 @@ class AutoAgentApp(App):
 
     def _on_apply_all_command_done(self, idx: int, success: bool, remaining_indices: list[int]) -> None:
         self.payload["files"][idx]["_status"] = "applied"
+        self._record_applied_file(self.payload["files"][idx])
         self._apply_next_pending(remaining_indices)
 
     def on_macro_done(self, completed_indices: list[int] | None) -> None:
         if completed_indices:
             for idx in completed_indices:
                 self.payload["files"][idx]["_status"] = "applied"
+                self._record_applied_file(self.payload["files"][idx])
             self.refresh_file_list()
             self._check_auto_reset()
 
@@ -2006,6 +2010,7 @@ class AutoAgentApp(App):
         action = file_obj.get("action", "").lower()
         if action == "command":
             file_obj["_status"] = "applied"
+            self._record_applied_file(file_obj)
             return
         path = file_obj.get("path")
         full_path = os.path.join(self.root_dir, path)
@@ -2013,6 +2018,7 @@ class AutoAgentApp(App):
             if os.path.exists(full_path):
                 os.remove(full_path)
             file_obj["_status"] = "applied"
+            self._record_applied_file(file_obj)
             return
         os.makedirs(os.path.dirname(full_path), exist_ok=True)
         if action == "create":
@@ -2038,6 +2044,7 @@ class AutoAgentApp(App):
             with open(full_path, "w", encoding="utf-8") as f:
                 f.write(new_text)
         file_obj["_status"] = "applied"
+        self._record_applied_file(file_obj)
 
     def commit_changes(self) -> None:
         msg = self.payload.get("commit_message", "Auto-commit from AI agent")
@@ -2077,6 +2084,30 @@ class AutoAgentApp(App):
         self._disable_all_buttons()
         pyperclip.copy("")
         self.polling_timer.resume()
+
+    def _record_applied_file(self, file_obj: dict) -> None:
+        if not hasattr(self, "session_applied_files"):
+            self.session_applied_files = []
+        identifier = file_obj.get("path") or file_obj.get("command")
+        if not identifier:
+            return
+        self.session_applied_files = [
+            f for f in self.session_applied_files
+            if (f.get("path") or f.get("command")) != identifier
+        ]
+        self.session_applied_files.append(file_obj)
+
+    def action_quit(self) -> None:
+        applied = getattr(self, "session_applied_files", [])
+        if applied:
+            summary_data = {
+                "commit_message": "Not committed",
+                "files": applied,
+                "commit_hash": None
+            }
+            self.exit(summary_data)
+        else:
+            self.exit(None)
 
 def run_auto_agent(root_dir: str, known_files: list[str] | None = None, revert_mode: bool = False, ignore_initial_clipboard: bool = False, web_mode: bool = False):
     try:

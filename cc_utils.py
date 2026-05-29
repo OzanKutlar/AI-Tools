@@ -292,7 +292,11 @@ def print_auto_summary(result: dict) -> None:
             console.print(f"  [bold yellow]✓[/bold yellow] [yellow]Modified File[/yellow] [bold]{path}[/bold]{diff_str}")
             
     console.print()
-    console.print(f"  [bold cyan]Committed with message:[/bold cyan] {commit_msg}")
+    commit_hash = result.get("commit_hash")
+    if commit_hash:
+        console.print(f"  [bold cyan]Committed with message:[/bold cyan] {commit_msg}")
+    else:
+        console.print(f"  [bold yellow]Note: Changes were applied but not committed to git.[/bold yellow]")
     console.print(Rule("[bold green]Done[/bold green]"))
 
 def display_summary(root_dir, max_depth, extensions, batch_count, total_files) -> None:
