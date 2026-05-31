@@ -2,6 +2,24 @@
 
 A repository of terminal user interface (TUI) utility tools that interact with AI models and local workspaces to assist with software development workflows.
 
+## Installation
+
+This repository is configured as a Python package. You can install it locally to make the tools available globally on your command line.
+
+```bash
+# Clone the repository
+git clone https://github.com/OzanKutlar/AI-Tools
+cd AI-Tools
+
+# Install the tools globally
+pip install .
+
+# Or install in editable mode for active development
+pip install -e .
+```
+
+Once installed, your system will have access to the following terminal commands: `combineCopy`, `ftpapp`, `webapp`, and `app` (which is a shortcut that automatically runs `combineCopy -a`).
+
 ## Overview of Tools
 
 This project consists of three primary Python-based utilities designed for AI-assisted development and remote deployments:

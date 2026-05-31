@@ -350,5 +350,12 @@ def main():
             except Exception as e:
                 console.print(f"[red]Failed to delete {zip_path_to_cleanup}: {e}[/red]")
 
+def app_main():
+    """Entry point for the 'app' command. Injects the '-a' flag automatically."""
+    import sys
+    if "-a" not in sys.argv and "--auto" not in sys.argv:
+        sys.argv.insert(1, "-a")
+    main()
+
 if __name__ == "__main__":
     main()
