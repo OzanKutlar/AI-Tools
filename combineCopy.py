@@ -57,7 +57,8 @@ def main():
     parser.add_argument("--system", nargs='?', const='DEFAULT', default=None, help="Inject system prompt and user instructions. Optionally provide a path to a custom system prompt file.")
     parser.add_argument("--file", action="store_true", help="Save prompt to a temp file and copy the file to clipboard")
     parser.add_argument("-k", "--kanban", action="store_true", help="Launch the persistent Kanban board interface")
-    parser.add_argument("--file-culling", action="store_true", help="Enable file culling / AST selection mode")
+    parser.add_argument("--file-culling", "--file-cull", action="store_true", dest="file_culling", help="Enable file culling / AST selection mode")
+    parser.add_argument("-js", "--json-select", action="store_true", help="Parse a JSON selection payload from clipboard to automatically select files/functions")
     args = parser.parse_args()
 
     root_dir = os.getcwd()
@@ -132,35 +133,148 @@ def main():
         console.print(Rule("[bold blue]CombineCopy Tool[/bold blue]"))
         found_files = []
         important_files = None
-        if args.specific_file:
-            target_path = os.path.abspath(args.specific_file)
-            if os.path.isfile(target_path):
-                found_files = [target_path]
-                important_files = [target_path]
-                console.print(f"[green]Targeting specific file:[/green] {args.specific_file}")
-                if not target_path.startswith(root_dir):
-                    root_dir = os.path.dirname(target_path)
-            else:
-                console.print(Panel(f"File not found: {args.specific_file}", title="Error", style="bold red"))
-                return
-        else:
-            with console.status("[bold green]Scanning directory structure...[/bold green]", spinner="dots"):
-                found_files = get_files_recursive(root_dir, 0, max_depth, ext_filters, exclude_dirs=args.exclude)
-        
-        all_known_files = list(found_files)
-
         partial_files = {}
-        if args.select and found_files:
-            console.print("[bold cyan]Phase: Manual File Selection[/bold cyan]")
-            selected = run_file_selector(root_dir, found_files, ast_mode=args.file_culling)
-            if selected is None:
-                console.print(Panel("Selection cancelled.", title="Cancelled", style="bold yellow"))
+
+        if args.json_select:
+            console.print("[bold cyan]Phase: JSON Selection Parsing[/bold cyan]")
+            import pyperclip
+            try:
+                clipboard_content = pyperclip.paste().strip()
+            except Exception as e:
+                console.print(f"[bold red]Error reading clipboard:[/bold red] {e}")
                 return
-            found_files, important_files, partial_files = selected
+            
+            if not clipboard_content:
+                console.print("[bold red]Clipboard is empty.[/bold red]")
+                return
+
+            results = []
+            idx = 0
+            while idx < len(clipboard_content):
+                start_idx = clipboard_content.find('{', idx)
+                if start_idx == -1:
+                    break
+                depth = 0
+                in_string = False
+                escape_next = False
+                end_idx = -1
+                for i in range(start_idx, len(clipboard_content)):
+                    char = clipboard_content[i]
+                    if escape_next:
+                        escape_next = False
+                        continue
+                    if char == '\\':
+                        escape_next = True
+                        continue
+                    if char == '"':
+                        in_string = not in_string
+                        continue
+                    if not in_string:
+                        if char == '{':
+                            depth += 1
+                        elif char == '}':
+                            depth -= 1
+                            if depth == 0:
+                                end_idx = i
+                                break
+                if end_idx != -1:
+                    results.append(clipboard_content[start_idx:end_idx + 1])
+                    idx = end_idx + 1
+                else:
+                    idx = start_idx + 1
+
+            selection_data = None
+            for json_str in results:
+                from cc_utils import intelligent_json_fix
+                data, _ = intelligent_json_fix(json_str)
+                if data and isinstance(data, dict):
+                    if data.get("phase") == "SELECT" or "files" in data or "functions" in data:
+                        selection_data = data
+                        break
+
+            if not selection_data:
+                console.print("[bold red]No valid SELECT JSON payload found on clipboard.[/bold red]")
+                return
+
+            console.print("[green]Found valid JSON selection payload.[/green]")
+            found_files = []
+            important_files = []
+            partial_files = {}
+
+            full_files_list = selection_data.get("files", [])
+            for f in full_files_list:
+                abs_path = os.path.abspath(os.path.join(root_dir, f))
+                if os.path.exists(abs_path) and os.path.isfile(abs_path):
+                    found_files.append(abs_path)
+                    important_files.append(abs_path)
+                    console.print(f"  Selected full file: [cyan]{f}[/cyan]")
+                else:
+                    console.print(f"  [yellow]Warning:[/yellow] File not found: [red]{f}[/red]")
+
+            functions_list = selection_data.get("functions", [])
+            for entry in functions_list:
+                fpath = entry.get("path")
+                names = entry.get("names", [])
+                if not fpath:
+                    continue
+                abs_path = os.path.abspath(os.path.join(root_dir, fpath))
+                if os.path.exists(abs_path) and os.path.isfile(abs_path):
+                    content = safe_read_file(abs_path)
+                    from cc_utils import extract_blocks
+                    blocks = extract_blocks(abs_path, content)
+                    matched_blocks = []
+                    for name in names:
+                        found_block = False
+                        for b in blocks:
+                            if name in b["name"]:
+                                matched_blocks.append(b)
+                                found_block = True
+                        if not found_block:
+                            console.print(f"  [yellow]Warning:[/yellow] Function/Class '[red]{name}[/red]' not found in [cyan]{fpath}[/cyan]")
+                    
+                    if matched_blocks:
+                        found_files.append(abs_path)
+                        partial_files[abs_path] = matched_blocks
+                        console.print(f"  Selected functions from [cyan]{fpath}[/cyan]: {', '.join(names)}")
+                else:
+                    console.print(f"  [yellow]Warning:[/yellow] File not found for partial selection: [red]{fpath}[/red]")
+
+            if not found_files:
+                console.print("[bold red]No files were successfully selected from the JSON payload.[/bold red]")
+                return
+
             all_known_files = list(found_files)
+
         else:
-            if important_files is None:
-                important_files = list(found_files)
+            if args.specific_file:
+                target_path = os.path.abspath(args.specific_file)
+                if os.path.isfile(target_path):
+                    found_files = [target_path]
+                    important_files = [target_path]
+                    console.print(f"[green]Targeting specific file:[/green] {args.specific_file}")
+                    if not target_path.startswith(root_dir):
+                        root_dir = os.path.dirname(target_path)
+                else:
+                    console.print(Panel(f"File not found: {args.specific_file}", title="Error", style="bold red"))
+                    return
+            else:
+                with console.status("[bold green]Scanning directory structure...[/bold green]", spinner="dots"):
+                    found_files = get_files_recursive(root_dir, 0, max_depth, ext_filters, exclude_dirs=args.exclude)
+            
+            all_known_files = list(found_files)
+
+            partial_files = {}
+            if args.select and found_files:
+                console.print("[bold cyan]Phase: Manual File Selection[/bold cyan]")
+                selected = run_file_selector(root_dir, found_files, ast_mode=args.file_culling)
+                if selected is None:
+                    console.print(Panel("Selection cancelled.", title="Cancelled", style="bold yellow"))
+                    return
+                found_files, important_files, partial_files = selected
+                all_known_files = list(found_files)
+            else:
+                if important_files is None:
+                    important_files = list(found_files)
     
         total_files = len(found_files)
         if total_files == 0:
@@ -195,6 +309,10 @@ def main():
                 except Exception as e:
                     console.print(f"[red]Error reading system prompt file: {e}[/red]")
                     return
+            
+            if args.file_culling:
+                from cc_prompts import FILE_CULLING_INSTRUCTIONS
+                sys_prompt_text += "\n\n" + FILE_CULLING_INSTRUCTIONS.strip()
                     
             app = SystemPromptApp(root_dir, found_files, sys_prompt_text)
             user_request_data = app.run()
