@@ -2049,7 +2049,15 @@ class AutoAgentApp(App):
     def commit_changes(self) -> None:
         msg = self.payload.get("commit_message", "Auto-commit from AI agent")
         try:
-            subprocess.run(["git", "add", "."], cwd=self.root_dir, check=True)
+            applied_files = [f for f in self.payload.get("files", []) if f.get("_status") == "applied"]
+            paths_to_stage = [f.get("path") for f in applied_files if f.get("path") and f.get("action", "").lower() != "command"]
+            
+            if paths_to_stage:
+                subprocess.run(["git", "add"] + paths_to_stage, cwd=self.root_dir, check=True)
+            else:
+                self.notify("No applied files to stage.", severity="warning")
+                return
+                
             subprocess.run(["git", "commit", "-m", msg], cwd=self.root_dir, check=True)
             
             commit_hash = ""
