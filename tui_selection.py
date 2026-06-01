@@ -113,6 +113,7 @@ class FileSelector(App):
         self.root_dir = root_dir
         self.all_files = files
         self.selected_paths = set(files)
+        self.important_paths = set()
         self.search_term = ""
         self.ast_mode = ast_mode
 
@@ -181,9 +182,10 @@ class FileSelector(App):
             for i, part in enumerate(parts):
                 if i == len(parts) - 1:
                     is_selected = file_path in self.selected_paths
+                    is_important = file_path in self.important_paths
                     current_node.add_leaf( 
-                        self._make_label(part, is_selected, "file", False, self.ast_mode),
-                        data={"type": "file", "selected": is_selected, "important": False, "name": part, "path": file_path},
+                        self._make_label(part, is_selected, "file", is_important, self.ast_mode),
+                        data={"type": "file", "selected": is_selected, "important": is_important, "name": part, "path": file_path},
                     )
                 else:
                     path_so_far = f"{path_so_far}/{part}" if path_so_far else part
@@ -225,6 +227,13 @@ class FileSelector(App):
             return
         node.data["selected"] = selected
         node.set_label(self._make_label(node.data["name"], selected, node.data["type"], node.data.get("important", False), self.ast_mode))
+        if node.data.get("type") == "file":
+            p = node.data.get("path")
+            if p:
+                if selected:
+                    self.selected_paths.add(p)
+                else:
+                    self.selected_paths.discard(p)
         for child in node.children:
             self._set_selected(child, selected)
 
@@ -233,6 +242,13 @@ class FileSelector(App):
             return
         node.data["important"] = important
         node.set_label(self._make_label(node.data["name"], node.data.get("selected", False), node.data["type"], important, self.ast_mode))
+        if node.data.get("type") == "file":
+            p = node.data.get("path")
+            if p:
+                if important:
+                    self.important_paths.add(p)
+                else:
+                    self.important_paths.discard(p)
         for child in node.children:
             self._set_important(child, important)
 
@@ -350,8 +366,12 @@ class FileSelector(App):
         self._update_subtitle()
 
     def action_confirm(self) -> None:
-        tree = self.query_one("#file-tree", SelectionTree)
-        self.exit(self._collect_selected(tree.root))
+        selected = [p for p in self.all_files if p in self.selected_paths]
+        if self.ast_mode:
+            important = [p for p in self.all_files if p in self.important_paths]
+        else:
+            important = list(selected)
+        self.exit((selected, important))
 
     def action_cancel(self) -> None:
         self.exit(None)
