@@ -135,6 +135,11 @@ class FileSelector(App):
 
     def on_input_changed(self, event: Input.Changed) -> None:
         self.search_term = event.value
+        if hasattr(self, "_search_timer"):
+            self._search_timer.cancel()
+        self._search_timer = self.set_timer(0.25, self._debounced_search)
+
+    def _debounced_search(self) -> None:
         self._build_tree()
         self._update_subtitle()
 
@@ -163,6 +168,8 @@ class FileSelector(App):
         root_name = os.path.basename(self.root_dir) or self.root_dir
         tree.root.data = {"type": "folder", "selected": True, "name": root_name}
 
+        nodes_cache = {"": tree.root}
+
         for file_path in self.all_files:
             rel_path = os.path.relpath(file_path, self.root_dir)
             if self.search_term and self.search_term.lower() not in rel_path.lower():
@@ -170,26 +177,24 @@ class FileSelector(App):
 
             parts = rel_path.replace("\\", "/").split("/")
             current_node = tree.root
+            path_so_far = ""
             for i, part in enumerate(parts):
                 if i == len(parts) - 1:
                     is_selected = file_path in self.selected_paths
-                    current_node.add_leaf(
+                    current_node.add_leaf( 
                         self._make_label(part, is_selected, "file", False, self.ast_mode),
                         data={"type": "file", "selected": is_selected, "important": False, "name": part, "path": file_path},
                     )
                 else:
-                    found = None
-                    for child in current_node.children:
-                        if (child.data and child.data.get("type") == "folder" and child.data.get("name") == part):
-                            found = child
-                            break
-                    if found:
-                        current_node = found
+                    path_so_far = f"{path_so_far}/{part}" if path_so_far else part
+                    if path_so_far in nodes_cache:
+                        current_node = nodes_cache[path_so_far]
                     else:
                         new_node = current_node.add(
                             self._make_label(part, True, "folder", False, self.ast_mode),
                             data={"type": "folder", "selected": True, "important": False, "name": part},
                         )
+                        nodes_cache[path_so_far] = new_node
                         current_node = new_node
         self._update_folder_states(tree.root)
         tree.root.expand()

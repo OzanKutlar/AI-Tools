@@ -5,7 +5,7 @@ import shutil
 import subprocess
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Header, Footer, Label, ListView, ListItem, TextArea, Button
+from textual.widgets import Header, Footer, Label, TextArea, Button, OptionList
 from textual.binding import Binding
 
 class SystemPromptApp(App):
@@ -36,8 +36,7 @@ class SystemPromptApp(App):
         background: #1e1a18;
         margin-bottom: 1;
     }
-    #left-pane ListView { height: 1fr; }
-    #left-pane ListItem { height: auto; }
+    #left-pane OptionList { height: 1fr; }
     TextArea:focus {
         border: double #d08c60;
     }
@@ -66,7 +65,7 @@ class SystemPromptApp(App):
             with Vertical(id="left-pane"):
                 yield Label("Files in Context", classes="panel-title")
                 rel_files = [os.path.relpath(f, self.root_dir) for f in self.files]
-                yield ListView(*[ListItem(Label(f)) for f in rel_files])
+                yield OptionList(*rel_files)
             with Vertical(id="right-pane"):
                 yield Label("Your Request / Problem (Ctrl+Enter to Submit):", classes="panel-title")
                 yield TextArea(id="user-request", text="")
