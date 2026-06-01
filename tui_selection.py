@@ -137,7 +137,7 @@ class FileSelector(App):
     def on_input_changed(self, event: Input.Changed) -> None:
         self.search_term = event.value
         if hasattr(self, "_search_timer"):
-            self._search_timer.cancel()
+            self._search_timer.stop()
         self._search_timer = self.set_timer(0.25, self._debounced_search)
 
     def _debounced_search(self) -> None:
