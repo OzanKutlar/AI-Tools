@@ -14,17 +14,109 @@ import pyperclip
 # Initialize Rich Console
 console = Console()
 
-def extract_signatures(filepath: str, content: str) -> list[str]:
-    """Uses regex to extract class and function definitions from source code."""
-    signatures = []
+def extract_blocks(filepath: str, content: str) -> list[dict]:
+    """Parses content to extract blocks (classes, functions, methods) with start and end line indices."""
+    ext = os.path.splitext(filepath)[1].lower()
     lines = content.split('\n')
-    py_pattern = re.compile(r'^\s*(class\s+\w+|def\s+\w+\s*\()')
+    blocks = []
+
+    py_pattern = re.compile(r'^\s*(class|def|async def)\s+\w+')
     js_pattern = re.compile(r'^\s*(?:export\s+)?(?:default\s+)?(?:class\s+\w+|function\s+\w+\s*\(|(?:const|let|var)\s+\w+\s*=\s*(?:async\s*)?(?:\([^)]*\)|[a-zA-Z0-9_]+)\s*=>)')
-    
-    for line in lines:
-        if py_pattern.match(line) or js_pattern.match(line):
-            signatures.append(line.strip()[:100])
-    return signatures
+    cs_method_pattern = re.compile(r'^\s*(?:(?:public|private|protected|internal|static|virtual|override|async|abstract|sealed|new)\s+)*[\w<>\[\]\?]+\s+\w+\s*(?:<[^>]*>\s*)?\(')
+    cs_ctor_pattern = re.compile(r'^\s*(?:(?:public|private|protected|internal|static)\s+)+\w+\s*\(')
+    cs_class_pattern = re.compile(r'^\s*(?:(?:public|private|protected|internal|static|virtual|override|abstract|sealed|partial)\s+)*(?:class|struct|interface|record)\s+\w+')
+
+    cs_exclusions = {"if", "while", "for", "foreach", "switch", "catch", "using", "lock", "typeof", "sizeof", "default", "return"}
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        matched = False
+        name = ""
+        is_brace_lang = False
+
+        if ext in ['.py', '.pyw']:
+            if py_pattern.match(line):
+                matched = True
+                name = line.strip()
+                is_brace_lang = False
+        elif ext in ['.js', '.jsx', '.ts', '.tsx']:
+            if js_pattern.match(line):
+                matched = True
+                name = line.strip()
+                is_brace_lang = True
+        elif ext in ['.cs']:
+            if cs_class_pattern.match(line):
+                matched = True
+                name = line.strip()
+                is_brace_lang = True
+            else:
+                m = cs_method_pattern.match(line) or cs_ctor_pattern.match(line)
+                if m:
+                    parts = line.split('(')[0].strip().split()
+                    if parts and parts[-1] not in cs_exclusions:
+                        matched = True
+                        name = line.strip()
+                        is_brace_lang = True
+
+        if matched:
+            start_line = i
+            end_line = i
+            if not is_brace_lang:
+                base_indent = len(line) - len(line.lstrip())
+                j = i + 1
+                while j < len(lines):
+                    curr_line = lines[j]
+                    if curr_line.strip() and not curr_line.lstrip().startswith('#'):
+                        curr_indent = len(curr_line) - len(curr_line.lstrip())
+                        if curr_indent <= base_indent:
+                            break
+                    end_line = j
+                    j += 1
+                i = j - 1
+            else:
+                brace_count = 0
+                found_start = False
+                j = i
+                while j < len(lines):
+                    curr_line = lines[j]
+                    clean_line = re.sub(r'".*?(?<!\\)"', '', curr_line)
+                    clean_line = re.sub(r"'.*?(?<!\\)'", '', clean_line)
+                    clean_line = re.sub(r'//.*', '', clean_line)
+                    
+                    if not found_start:
+                        if ';' in clean_line and '{' not in clean_line:
+                            end_line = j
+                            break
+                        if '{' in clean_line:
+                            found_start = True
+                            brace_count += clean_line.count('{')
+                            brace_count -= clean_line.count('}')
+                            if brace_count <= 0:
+                                end_line = j
+                                break
+                    else:
+                        brace_count += clean_line.count('{')
+                        brace_count -= clean_line.count('}')
+                        if brace_count <= 0:
+                            end_line = j
+                            break
+                    end_line = j
+                    j += 1
+                i = j
+
+            blocks.append({
+                "name": name[:100],
+                "start": start_line,
+                "end": end_line
+            })
+        i += 1
+    return blocks
+
+def extract_signatures(filepath: str, content: str) -> list[str]:
+    """Uses block extraction to retrieve class and function definitions from source code."""
+    blocks = extract_blocks(filepath, content)
+    return [b["name"] for b in blocks]
 
 def is_binary_file(filepath: str) -> bool:
     """Check if a file is binary by extension or by looking for null bytes in the first 8192 bytes."""

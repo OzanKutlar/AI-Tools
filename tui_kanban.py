@@ -228,9 +228,10 @@ class KanbanApp(App):
             selected = run_file_selector(self.root_dir, all_files)
             
         if selected is not None:
-            sel_paths, _ = selected
+            sel_paths, _, partials = selected
             rel_paths = [os.path.relpath(p, self.root_dir) for p in sel_paths]
             task["files"] = rel_paths
+            task["partials"] = {os.path.relpath(k, self.root_dir): v for k, v in partials.items()}
             if task["status"] == "waiting":
                 task["status"] = "selecting"
             
@@ -300,7 +301,28 @@ class KanbanApp(App):
             buffer.append(f"```{lang}")
             if os.path.exists(full_path):
                 try:
-                    buffer.append(safe_read_file(full_path))
+                    content = safe_read_file(full_path)
+                    partials = task.get("partials", {}).get(fpath)
+                    if partials:
+                        lines = content.splitlines(keepends=True)
+                        intervals = []
+                        for b in partials:
+                            intervals.append([max(0, b["start"] - 3), min(len(lines) - 1, b["end"] + 3)])
+                        intervals.sort(key=lambda x: x[0])
+                        merged = []
+                        for interval in intervals:
+                            if not merged or merged[-1][1] < interval[0] - 1:
+                                merged.append(interval)
+                            else:
+                                merged[-1][1] = max(merged[-1][1], interval[1])
+                        partial_content = []
+                        for i, interval in enumerate(merged):
+                            if i > 0:
+                                partial_content.append("\n// ... (hidden lines) ...\n\n")
+                            partial_content.extend(lines[interval[0]:interval[1]+1])
+                        buffer.append("".join(partial_content))
+                    else:
+                        buffer.append(content)
                 except Exception as e:
                     buffer.append(f"[Error reading file: {e}]")
             else:

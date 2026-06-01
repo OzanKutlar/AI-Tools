@@ -149,13 +149,14 @@ def main():
         
         all_known_files = list(found_files)
 
+        partial_files = {}
         if args.select and found_files:
             console.print("[bold cyan]Phase: Manual File Selection[/bold cyan]")
             selected = run_file_selector(root_dir, found_files, ast_mode=args.file_culling)
             if selected is None:
                 console.print(Panel("Selection cancelled.", title="Cancelled", style="bold yellow"))
                 return
-            found_files, important_files = selected
+            found_files, important_files, partial_files = selected
             all_known_files = list(found_files)
         else:
             if important_files is None:
@@ -244,9 +245,15 @@ def main():
                     important_set = set(important_files) if important_files is not None else set()
                     for file_path in current_batch_files:
                         if stop_event.is_set(): return
-                        if file_path in important_set:
+                        if file_path in important_set or file_path in partial_files:
                             rel_path = os.path.relpath(file_path, root_dir)
-                            progress.console.print(f"  [green]✓[/green] Adding [bold]{rel_path}[/bold] (Full Context)")
+                            is_partial = file_path in partial_files and file_path not in important_set
+                            
+                            if is_partial:
+                                progress.console.print(f"  [green]✓[/green] Adding [bold]{rel_path}[/bold] (Partial Context)")
+                            else:
+                                progress.console.print(f"  [green]✓[/green] Adding [bold]{rel_path}[/bold] (Full Context)")
+                                
                             _, ext = os.path.splitext(rel_path)
                             lang = ext.lstrip('.').lower()
                             content_buffer.append(separator)
@@ -254,7 +261,28 @@ def main():
                             content_buffer.append(separator)
                             content_buffer.append(f"```{lang}")
                             try:
-                                content_buffer.append(safe_read_file(file_path))
+                                content = safe_read_file(file_path)
+                                if is_partial:
+                                    blocks = partial_files[file_path]
+                                    lines = content.splitlines(keepends=True)
+                                    intervals = []
+                                    for b in blocks:
+                                        intervals.append([max(0, b["start"] - 3), min(len(lines) - 1, b["end"] + 3)])
+                                    intervals.sort(key=lambda x: x[0])
+                                    merged = []
+                                    for interval in intervals:
+                                        if not merged or merged[-1][1] < interval[0] - 1:
+                                            merged.append(interval)
+                                        else:
+                                            merged[-1][1] = max(merged[-1][1], interval[1])
+                                    partial_content = []
+                                    for i, interval in enumerate(merged):
+                                        if i > 0:
+                                            partial_content.append("\n// ... (hidden lines) ...\n\n")
+                                        partial_content.extend(lines[interval[0]:interval[1]+1])
+                                    content_buffer.append("".join(partial_content))
+                                else:
+                                    content_buffer.append(content)
                             except Exception as e:
                                 progress.console.print(f"  [red]![/red] Error reading {rel_path}: {e}")
                                 content_buffer.append(f"[Error reading file: {e}]")

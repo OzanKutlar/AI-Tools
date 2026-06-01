@@ -50,6 +50,8 @@ class SelectionTree(Tree):
         if getattr(self.app, "ast_mode", False):
             self.app.action_toggle_important()
 
+from cc_utils import extract_blocks, safe_read_file
+
 class FileSelector(App):
     """Full-screen TUI for selecting which files to include."""
     CSS = """
@@ -112,8 +114,6 @@ class FileSelector(App):
         super().__init__()
         self.root_dir = root_dir
         self.all_files = files
-        self.selected_paths = set(files)
-        self.important_paths = set()
         self.search_term = ""
         self.ast_mode = ast_mode
 
@@ -148,26 +148,32 @@ class FileSelector(App):
         self.query_one("#file-tree").focus()
 
     @staticmethod
-    def _make_label(name: str, selected: bool, node_type: str, important: bool = False, ast_mode: bool = False) -> Text:
-        icon = "📂 " if node_type == "folder" else "📄 "
+    def _make_label(name: str, state: str, node_type: str, important: bool = False, ast_mode: bool = False) -> Text:
+        if node_type == "folder":
+            icon = "📂 "
+        elif node_type == "block":
+            icon = "ƒ "
+        else:
+            icon = "📄 "
+            
         label = Text()
-        if ast_mode and important:
+        if ast_mode and important and node_type != "block":
             label.append("[FULL] ", style="bold magenta")
-        elif selected:
+        elif state == "checked":
             label.append("☑ ", style="bold green")
+        elif state == "partial":
+            label.append("▣ ", style="bold yellow")
         else:
             label.append("☐ ", style="bold red")
-        if node_type == "folder":
-            label.append(icon + name, style="bold")
-        else:
-            label.append(icon + name)
+            
+        label.append(icon + name, style="bold" if node_type == "folder" else "")
         return label
 
     def _build_tree(self) -> None:
         tree = self.query_one("#file-tree", SelectionTree)
         tree.clear()
         root_name = os.path.basename(self.root_dir) or self.root_dir
-        tree.root.data = {"type": "folder", "selected": True, "name": root_name}
+        tree.root.data = {"type": "folder", "state": "checked", "name": root_name}
 
         nodes_cache = {"": tree.root}
 
@@ -181,74 +187,75 @@ class FileSelector(App):
             path_so_far = ""
             for i, part in enumerate(parts):
                 if i == len(parts) - 1:
-                    is_selected = file_path in self.selected_paths
-                    is_important = file_path in self.important_paths
-                    current_node.add_leaf( 
-                        self._make_label(part, is_selected, "file", is_important, self.ast_mode),
-                        data={"type": "file", "selected": is_selected, "important": is_important, "name": part, "path": file_path},
+                    file_node = current_node.add(
+                        self._make_label(part, "checked", "file", False, self.ast_mode),
+                        data={"type": "file", "state": "checked", "important": False, "name": part, "path": file_path}
                     )
+                    
+                    content = safe_read_file(file_path)
+                    if content and not content.startswith("(This is a binary"):
+                        blocks = extract_blocks(file_path, content)
+                        for idx, b in enumerate(blocks):
+                            file_node.add_leaf(
+                                self._make_label(b["name"], "checked", "block", False, self.ast_mode),
+                                data={"type": "block", "state": "checked", "file_path": file_path, "block_idx": idx, "name": b["name"], "start": b["start"], "end": b["end"]}
+                            )
                 else:
                     path_so_far = f"{path_so_far}/{part}" if path_so_far else part
                     if path_so_far in nodes_cache:
                         current_node = nodes_cache[path_so_far]
                     else:
                         new_node = current_node.add(
-                            self._make_label(part, True, "folder", False, self.ast_mode),
-                            data={"type": "folder", "selected": True, "important": False, "name": part},
+                            self._make_label(part, "checked", "folder", False, self.ast_mode),
+                            data={"type": "folder", "state": "checked", "important": False, "name": part},
                         )
                         nodes_cache[path_so_far] = new_node
                         current_node = new_node
         self._update_folder_states(tree.root)
         tree.root.expand()
 
-    def _update_folder_states(self, node) -> bool:
-        if not node.children and node.data and node.data.get("type") == "folder":
-            return node.data.get("selected", False)
-        if node.data and node.data.get("type") == "file":
-            return node.data.get("selected", False)
-            
-        all_selected = True
-        has_children = False
-        for child in node.children:
-            has_children = True
-            if not self._update_folder_states(child):
-                all_selected = False
-                
-        if not has_children:
-            all_selected = node.data.get("selected", False) if node.data else False
-                
-        if node.data:
-            node.data["selected"] = all_selected
-            node.set_label(self._make_label(node.data["name"], all_selected, node.data["type"], node.data.get("important", False), self.ast_mode))
-        return all_selected
+    def _update_folder_states(self, node) -> str:
+        if not node.children:
+            return node.data.get("state", "unchecked") if node.data else "unchecked"
 
-    def _set_selected(self, node, selected: bool) -> None:
+        has_checked = False
+        has_unchecked = False
+        has_partial = False
+
+        for child in node.children:
+            c_state = self._update_folder_states(child)
+            if c_state == "checked":
+                has_checked = True
+            elif c_state == "unchecked":
+                has_unchecked = True
+            elif c_state == "partial":
+                has_partial = True
+
+        if has_partial or (has_checked and has_unchecked):
+            final_state = "partial"
+        elif has_checked:
+            final_state = "checked"
+        else:
+            final_state = "unchecked"
+
+        if node.data:
+            node.data["state"] = final_state
+            node.set_label(self._make_label(node.data["name"], final_state, node.data["type"], node.data.get("important", False), self.ast_mode))
+        return final_state
+
+    def _set_state(self, node, state: str) -> None:
         if node.data is None:
             return
-        node.data["selected"] = selected
-        node.set_label(self._make_label(node.data["name"], selected, node.data["type"], node.data.get("important", False), self.ast_mode))
-        if node.data.get("type") == "file":
-            p = node.data.get("path")
-            if p:
-                if selected:
-                    self.selected_paths.add(p)
-                else:
-                    self.selected_paths.discard(p)
+        node.data["state"] = state
+        node.set_label(self._make_label(node.data["name"], state, node.data["type"], node.data.get("important", False), self.ast_mode))
         for child in node.children:
-            self._set_selected(child, selected)
+            self._set_state(child, state)
 
     def _set_important(self, node, important: bool) -> None:
         if node.data is None:
             return
         node.data["important"] = important
-        node.set_label(self._make_label(node.data["name"], node.data.get("selected", False), node.data["type"], important, self.ast_mode))
-        if node.data.get("type") == "file":
-            p = node.data.get("path")
-            if p:
-                if important:
-                    self.important_paths.add(p)
-                else:
-                    self.important_paths.discard(p)
+        node.set_label(self._make_label(node.data["name"], node.data.get("state", "unchecked"), node.data["type"], important, self.ast_mode))
         for child in node.children:
             self._set_important(child, important)
 
@@ -256,8 +263,10 @@ class FileSelector(App):
         if node is None:
             node = self.query_one("#file-tree", SelectionTree).root
         count = 0
-        if node.data and node.data["type"] == "file" and node.data["selected"]:
-            count = 1
+        if node.data and node.data["type"] == "file":
+            if node.data.get("state") in ("checked", "partial"):
+                return 1
+            return 0
         for child in node.children:
             count += self._count_selected(child)
         return count
@@ -268,36 +277,29 @@ class FileSelector(App):
     def _update_parent_states(self, node) -> None:
         parent = node.parent
         while parent and parent.data:
-            all_selected = True
-            if not parent.children:
-                all_selected = False
+            has_checked = False
+            has_unchecked = False
+            has_partial = False
+            
+            for child in parent.children:
+                c_state = child.data.get("state", "unchecked") if child.data else "unchecked"
+                if c_state == "checked": has_checked = True
+                elif c_state == "unchecked": has_unchecked = True
+                elif c_state == "partial": has_partial = True
+                
+            if has_partial or (has_checked and has_unchecked):
+                final_state = "partial"
+            elif has_checked:
+                final_state = "checked"
             else:
-                for child in parent.children:
-                    if child.data and not child.data.get("selected", False):
-                        all_selected = False
-                        break
-            if parent.data.get("selected") != all_selected:
-                parent.data["selected"] = all_selected
-                parent.set_label(self._make_label(parent.data["name"], all_selected, parent.data["type"], parent.data.get("important", False), self.ast_mode))
+                final_state = "unchecked"
+                
+            if parent.data.get("state") != final_state:
+                parent.data["state"] = final_state
+                parent.set_label(self._make_label(parent.data["name"], final_state, parent.data["type"], parent.data.get("important", False), self.ast_mode))
                 parent = parent.parent
             else:
                 break
-
-    def _collect_selected(self, node) -> tuple[list[str], list[str]]:
-        selected: list[str] = []
-        important: list[str] = []
-        if node.data and node.data["type"] == "file":
-            if node.data.get("selected"):
-                selected.append(node.data["path"])
-                if not self.ast_mode:
-                    important.append(node.data["path"])
-            if self.ast_mode and node.data.get("important"):
-                important.append(node.data["path"])
-        for child in node.children:
-            c_sel, c_imp = self._collect_selected(child)
-            selected.extend(c_sel)
-            important.extend(c_imp)
-        return selected, important
 
     def on_tree_node_highlighted(self, event: Tree.NodeHighlighted) -> None:
         node = event.node
@@ -327,8 +329,8 @@ class FileSelector(App):
         node = tree.cursor_node
         if not node or not node.data:
             return
-        new_state = not node.data["selected"]
-        self._set_selected(node, new_state)
+        new_state = "unchecked" if node.data.get("state") == "checked" else "checked"
+        self._set_state(node, new_state)
         self._update_parent_states(node)
         self._update_subtitle()
 
@@ -345,8 +347,8 @@ class FileSelector(App):
             self._update_parent_states(node)
         else:
             new_state = not node.data.get("important", False)
-            if new_state and not node.data.get("selected", False):
-                self._set_selected(node, True)
+            if new_state and node.data.get("state") == "unchecked":
+                self._set_state(node, "checked")
                 self._update_parent_states(node)
             self._set_important(node, new_state)
         self._update_subtitle()
@@ -358,20 +360,45 @@ class FileSelector(App):
         self.action_toggle_node()
 
     def action_select_all(self) -> None:
-        self._set_selected(self.query_one("#file-tree", SelectionTree).root, True)
+        self._set_state(self.query_one("#file-tree", SelectionTree).root, "checked")
         self._update_subtitle()
 
     def action_select_none(self) -> None:
-        self._set_selected(self.query_one("#file-tree", SelectionTree).root, False)
+        self._set_state(self.query_one("#file-tree", SelectionTree).root, "unchecked")
         self._update_subtitle()
 
     def action_confirm(self) -> None:
-        selected = [p for p in self.all_files if p in self.selected_paths]
-        if self.ast_mode:
-            important = [p for p in self.all_files if p in self.important_paths]
-        else:
-            important = list(selected)
-        self.exit((selected, important))
+        selected_files = []
+        important_files = []
+        partial_files = {}
+        
+        def walk(node):
+            if node.data and node.data["type"] == "file":
+                p = node.data["path"]
+                if node.data["state"] == "checked":
+                    selected_files.append(p)
+                    if not self.ast_mode:
+                        important_files.append(p)
+                elif node.data["state"] == "partial":
+                    blocks = []
+                    for child in node.children:
+                        if child.data and child.data["state"] == "checked":
+                            blocks.append({
+                                "name": child.data["name"],
+                                "start": child.data["start"],
+                                "end": child.data["end"]
+                            })
+                    if blocks:
+                        partial_files[p] = blocks
+                        selected_files.append(p)
+                if self.ast_mode and node.data.get("important"):
+                    important_files.append(p)
+            else:
+                for child in node.children:
+                    walk(child)
+                    
+        walk(self.query_one("#file-tree", SelectionTree).root)
+        self.exit((selected_files, important_files, partial_files))
 
     def action_cancel(self) -> None:
         self.exit(None)
