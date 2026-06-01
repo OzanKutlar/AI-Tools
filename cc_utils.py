@@ -22,11 +22,11 @@ def extract_blocks(filepath: str, content: str) -> list[dict]:
 
     py_pattern = re.compile(r'^\s*(class|def|async def)\s+\w+')
     js_pattern = re.compile(r'^\s*(?:export\s+)?(?:default\s+)?(?:class\s+\w+|function\s+\w+\s*\(|(?:const|let|var)\s+\w+\s*=\s*(?:async\s*)?(?:\([^)]*\)|[a-zA-Z0-9_]+)\s*=>)')
-    cs_method_pattern = re.compile(r'^\s*(?:(?:public|private|protected|internal|static|virtual|override|async|abstract|sealed|new)\s+)*[\w<>\[\]\?]+\s+\w+\s*(?:<[^>]*>\s*)?\(')
+    cs_method_pattern = re.compile(r'^\s*(?:(?:public|private|protected|internal|static|virtual|override|async|abstract|sealed|new|final|synchronized|native|strictfp)\s+)*[\w<>\[\]\?]+\s+\w+\s*(?:<[^>]*>\s*)?\(')
     cs_ctor_pattern = re.compile(r'^\s*(?:(?:public|private|protected|internal|static)\s+)+\w+\s*\(')
-    cs_class_pattern = re.compile(r'^\s*(?:(?:public|private|protected|internal|static|virtual|override|abstract|sealed|partial)\s+)*(?:class|struct|interface|record)\s+\w+')
+    cs_class_pattern = re.compile(r'^\s*(?:(?:public|private|protected|internal|static|virtual|override|abstract|sealed|partial|final|strictfp)\s+)*(?:class|struct|interface|record|enum)\s+\w+')
 
-    cs_exclusions = {"if", "while", "for", "foreach", "switch", "catch", "using", "lock", "typeof", "sizeof", "default", "return"}
+    cs_exclusions = {"if", "while", "for", "foreach", "switch", "catch", "using", "lock", "typeof", "sizeof", "default", "return", "throw", "new"}
 
     i = 0
     while i < len(lines):
@@ -45,7 +45,7 @@ def extract_blocks(filepath: str, content: str) -> list[dict]:
                 matched = True
                 name = line.strip()
                 is_brace_lang = True
-        elif ext in ['.cs']:
+        elif ext in ['.cs', '.java']:
             if cs_class_pattern.match(line):
                 matched = True
                 name = line.strip()
@@ -73,7 +73,6 @@ def extract_blocks(filepath: str, content: str) -> list[dict]:
                             break
                     end_line = j
                     j += 1
-                i = j - 1
             else:
                 brace_count = 0
                 found_start = False
@@ -103,7 +102,6 @@ def extract_blocks(filepath: str, content: str) -> list[dict]:
                             break
                     end_line = j
                     j += 1
-                i = j
 
             blocks.append({
                 "name": name[:100],
