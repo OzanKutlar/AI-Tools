@@ -54,6 +54,7 @@ def main():
     parser.add_argument("-o", "--orchestrate", action="store_true", help="Run in orchestrator mode to generate a precise execution plan and prompt.")
     parser.add_argument("--cli", action="store_true", help="Enable CLI Mode. Allows the AI to output terminal commands to be executed.")
     parser.add_argument("--web", action="store_true", help="Enable web macro mode. Translates applies into simulated keyboard strokes for web IDEs.")
+    parser.add_argument("--tfs", action="store_true", help="Use TFVC (tf.exe) instead of git for checkout and checkin operations.")
     parser.add_argument("--system", nargs='?', const='DEFAULT', default=None, help="Inject system prompt and user instructions. Optionally provide a path to a custom system prompt file.")
     parser.add_argument("--file", action="store_true", help="Save prompt to a temp file and copy the file to clipboard")
     parser.add_argument("-k", "--kanban", action="store_true", help="Launch the persistent Kanban board interface")
@@ -111,7 +112,7 @@ def main():
                 console.print(Panel("Orchestrator payload successfully copied to clipboard.", title="Success", style="bold green"))
             return
         else:
-            app = AutoAgentApp(root_dir, revert_mode=args.revert, web_mode=args.web)
+            app = AutoAgentApp(root_dir, revert_mode=args.revert, web_mode=args.web, tfs_mode=args.tfs)
             result = app.run()
             if result:
                 print_auto_summary(result)
@@ -481,7 +482,7 @@ def main():
             if args.web:
                 phase_name += " [WEB MACRO MODE]"
             console.print(f"\n[bold cyan]Phase: {phase_name}[/bold cyan]")
-            app = AutoAgentApp(root_dir, all_known_files, revert_mode=args.revert, ignore_initial_clipboard=True, web_mode=args.web)
+            app = AutoAgentApp(root_dir, all_known_files, revert_mode=args.revert, ignore_initial_clipboard=True, web_mode=args.web, tfs_mode=args.tfs)
             result = app.run()
             if result:
                 print_auto_summary(result)

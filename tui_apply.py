@@ -34,6 +34,7 @@ from cc_utils import (
 )
 
 from cc_prompts import DEFAULT_SYSTEM_PROMPT_TEMPLATE, CLI_SYSTEM_PROMPT_TEMPLATE
+from vcs_tfs import tfs_checkout, tfs_add, tfs_delete, tfs_checkin
 
 class CommandExecutionScreen(ModalScreen[bool]):
     CSS = """
@@ -1167,12 +1168,13 @@ class AutoAgentApp(App):
     ]
     TITLE = "CombineCopy — Auto Agent Listener"
 
-    def __init__(self, root_dir: str, known_files: list[str] | None = None, revert_mode: bool = False, ignore_initial_clipboard: bool = False, web_mode: bool = False):
+    def __init__(self, root_dir: str, known_files: list[str] | None = None, revert_mode: bool = False, ignore_initial_clipboard: bool = False, web_mode: bool = False, tfs_mode: bool = False):
         super().__init__()
         self.root_dir = root_dir
         self.known_files = known_files or []
         self.revert_mode = revert_mode
         self.web_mode = web_mode
+        self.tfs_mode = tfs_mode
         self.ignore_initial_clipboard = ignore_initial_clipboard
         self.last_clipboard = ""
         self.payload = None
@@ -1185,6 +1187,8 @@ class AutoAgentApp(App):
             self.title = "CombineCopy — Auto Agent Listener (REVERT MODE)"
         if self.web_mode:
             self.title = "CombineCopy — Auto Agent Listener (WEB MACRO MODE)"
+        if self.tfs_mode:
+            self.title = "CombineCopy — Auto Agent Listener (TFS MODE)"
 
     def action_reload(self) -> None:
         self.last_clipboard = ""
@@ -2015,8 +2019,13 @@ class AutoAgentApp(App):
         path = file_obj.get("path")
         full_path = os.path.join(self.root_dir, path)
         if action == "delete":
-            if os.path.exists(full_path):
-                os.remove(full_path)
+            if self.tfs_mode:
+                errors = tfs_delete(self.root_dir, [path])
+                if errors:
+                    self.notify(f"TFS delete error: {errors[0]}", severity="error")
+            else:
+                if os.path.exists(full_path):
+                    os.remove(full_path)
             file_obj["_status"] = "applied"
             self._record_applied_file(file_obj)
             return
@@ -2025,6 +2034,11 @@ class AutoAgentApp(App):
             with open(full_path, "w", encoding="utf-8") as f:
                 f.write(file_obj.get("content", ""))
         elif action == "modify":
+            # TFS server workspace: checkout before editing
+            if self.tfs_mode and os.path.exists(full_path):
+                errors = tfs_checkout(self.root_dir, [path])
+                if errors:
+                    self.notify(f"TFS checkout error: {errors[0]}", severity="error")
             old_text = ""
             if os.path.exists(full_path):
                 old_text = safe_read_file(full_path)
@@ -2048,24 +2062,29 @@ class AutoAgentApp(App):
 
     def commit_changes(self) -> None:
         msg = self.payload.get("commit_message", "Auto-commit from AI agent")
+        applied_files = [f for f in self.payload.get("files", []) if f.get("_status") == "applied"]
+        paths_to_stage = [f.get("path") for f in applied_files if f.get("path") and f.get("action", "").lower() != "command"]
+
+        if not paths_to_stage:
+            self.notify("No applied files to stage.", severity="warning")
+            return
+
+        if self.tfs_mode:
+            self._commit_tfs(msg, applied_files, paths_to_stage)
+        else:
+            self._commit_git(msg, paths_to_stage)
+
+    def _commit_git(self, msg: str, paths_to_stage: list[str]) -> None:
         try:
-            applied_files = [f for f in self.payload.get("files", []) if f.get("_status") == "applied"]
-            paths_to_stage = [f.get("path") for f in applied_files if f.get("path") and f.get("action", "").lower() != "command"]
-            
-            if paths_to_stage:
-                subprocess.run(["git", "add"] + paths_to_stage, cwd=self.root_dir, check=True)
-            else:
-                self.notify("No applied files to stage.", severity="warning")
-                return
-                
+            subprocess.run(["git", "add"] + paths_to_stage, cwd=self.root_dir, check=True)
             subprocess.run(["git", "commit", "-m", msg], cwd=self.root_dir, check=True)
-            
+
             commit_hash = ""
             try:
                 commit_hash = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.root_dir, text=True).strip()
             except Exception:
                 pass
-                
+
             self.notify("Changes successfully committed to Git! Closing app.", title="Success")
             summary_data = {
                 "commit_message": msg,
@@ -2075,6 +2094,26 @@ class AutoAgentApp(App):
             self.exit(summary_data)
         except subprocess.CalledProcessError as e:
             self.notify(f"Git error: {e}", title="Error", severity="error")
+
+    def _commit_tfs(self, msg: str, applied_files: list[dict], paths_to_stage: list[str]) -> None:
+        # Separate new files that need tf add
+        add_paths = [f.get("path") for f in applied_files if f.get("action", "").lower() == "create" and f.get("path")]
+        errors = tfs_add(self.root_dir, add_paths)
+        if errors:
+            self.notify(f"TFS add warnings: {'; '.join(errors)}", severity="warning")
+
+        changeset, error = tfs_checkin(self.root_dir, paths_to_stage, msg)
+        if error:
+            self.notify(f"TFS checkin error: {error}", title="Error", severity="error")
+            return
+
+        self.notify(f"Checked in as Changeset #{changeset}! Closing app.", title="Success")
+        summary_data = {
+            "commit_message": msg,
+            "files": self.payload.get("files", []),
+            "commit_hash": f"CS{changeset}" if changeset else None
+        }
+        self.exit(summary_data)
 
     def reset_state(self) -> None:
         self.payload = None
