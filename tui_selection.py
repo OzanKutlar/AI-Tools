@@ -136,16 +136,11 @@ class FileSelector(App):
 
     def on_input_changed(self, event: Input.Changed) -> None:
         self.search_term = event.value
-        if hasattr(self, "_search_timer"):
-            self._search_timer.stop()
-        # Debounce search by 300ms to prevent lagging on every keystroke
-        self._search_timer = self.set_timer(0.3, self._debounced_search)
 
-    def _debounced_search(self) -> None:
-        self._build_tree()
-        self._update_subtitle()
+
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
+        self._build_tree()
         self.query_one("#file-tree").focus()
 
     @staticmethod
