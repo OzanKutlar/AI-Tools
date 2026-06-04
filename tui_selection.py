@@ -182,10 +182,15 @@ class FileSelector(App):
             current_node = tree.root
             path_so_far = ""
             for i, part in enumerate(parts):
+                # If searching, we want new files to be 'unchecked' by default so they aren't auto-selected
+                is_searching = bool(self.search_term)
+                default_file_state = "unchecked" if is_searching else "checked"
+                default_folder_state = "checked" # Folders stay checked to keep hierarchy visible
+
                 if i == len(parts) - 1:
                     file_node = current_node.add(
-                        self._make_label(part, "checked", "file", False, self.ast_mode),
-                        data={"type": "file", "state": "checked", "important": False, "name": part, "path": file_path}
+                        self._make_label(part, default_file_state, "file", False, self.ast_mode),
+                        data={"type": "file", "state": default_file_state, "important": False, "name": part, "path": file_path}
                     )
                     
                     content = safe_read_file(file_path)
@@ -193,8 +198,8 @@ class FileSelector(App):
                         blocks = extract_blocks(file_path, content)
                         for idx, b in enumerate(blocks):
                             file_node.add_leaf(
-                                self._make_label(b["name"], "checked", "block", False, self.ast_mode),
-                                data={"type": "block", "state": "checked", "file_path": file_path, "block_idx": idx, "name": b["name"], "start": b["start"], "end": b["end"]}
+                                self._make_label(b["name"], default_file_state, "block", False, self.ast_mode),
+                                data={"type": "block", "state": default_file_state, "file_path": file_path, "block_idx": idx, "name": b["name"], "start": b["start"], "end": b["end"]}
                             )
                 else:
                     path_so_far = f"{path_so_far}/{part}" if path_so_far else part
@@ -202,8 +207,8 @@ class FileSelector(App):
                         current_node = nodes_cache[path_so_far]
                     else:
                         new_node = current_node.add(
-                            self._make_label(part, "checked", "folder", False, self.ast_mode),
-                            data={"type": "folder", "state": "checked", "important": False, "name": part},
+                            self._make_label(part, default_folder_state, "folder", False, self.ast_mode),
+                            data={"type": "folder", "state": default_folder_state, "important": False, "name": part},
                         )
                         nodes_cache[path_so_far] = new_node
                         current_node = new_node
