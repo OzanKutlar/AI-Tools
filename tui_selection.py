@@ -165,8 +165,34 @@ class FileSelector(App):
         label.append(icon + name, style="bold" if node_type == "folder" else "")
         return label
 
+    def _save_states(self) -> dict:
+        """Save current selection states keyed by file path before rebuilding."""
+        saved = {}
+        tree = self.query_one("#file-tree", SelectionTree)
+
+        def _walk(node):
+            if node.data and node.data["type"] == "file":
+                path = node.data.get("path", "")
+                saved[path] = {
+                    "state": node.data.get("state", "unchecked"),
+                    "important": node.data.get("important", False),
+                }
+                # Save block states too
+                for child in node.children:
+                    if child.data and child.data["type"] == "block":
+                        key = f"{path}::{child.data.get('name', '')}"
+                        saved[key] = {"state": child.data.get("state", "unchecked")}
+            else:
+                for child in node.children:
+                    _walk(child)
+
+        if tree.root.data:
+            _walk(tree.root)
+        return saved
+
     def _build_tree(self) -> None:
         tree = self.query_one("#file-tree", SelectionTree)
+        saved_states = self._save_states() if tree.root.data else {}
         tree.clear()
         root_name = os.path.basename(self.root_dir) or self.root_dir
         tree.root.data = {"type": "folder", "state": "checked", "name": root_name}
@@ -188,18 +214,30 @@ class FileSelector(App):
                 default_folder_state = "checked" # Folders stay checked to keep hierarchy visible
 
                 if i == len(parts) - 1:
+                    # Restore saved state if available
+                    file_saved = saved_states.get(file_path)
+                    if file_saved:
+                        file_state = file_saved["state"]
+                        file_important = file_saved.get("important", False)
+                    else:
+                        file_state = default_file_state
+                        file_important = False
+
                     file_node = current_node.add(
-                        self._make_label(part, default_file_state, "file", False, self.ast_mode),
-                        data={"type": "file", "state": default_file_state, "important": False, "name": part, "path": file_path}
+                        self._make_label(part, file_state, "file", file_important, self.ast_mode),
+                        data={"type": "file", "state": file_state, "important": file_important, "name": part, "path": file_path}
                     )
                     
                     content = safe_read_file(file_path)
                     if content and not content.startswith("(This is a binary"):
                         blocks = extract_blocks(file_path, content)
                         for idx, b in enumerate(blocks):
+                            block_key = f"{file_path}::{b['name']}"
+                            block_saved = saved_states.get(block_key)
+                            block_state = block_saved["state"] if block_saved else file_state
                             file_node.add_leaf(
-                                self._make_label(b["name"], default_file_state, "block", False, self.ast_mode),
-                                data={"type": "block", "state": default_file_state, "file_path": file_path, "block_idx": idx, "name": b["name"], "start": b["start"], "end": b["end"]}
+                                self._make_label(b["name"], block_state, "block", False, self.ast_mode),
+                                data={"type": "block", "state": block_state, "file_path": file_path, "block_idx": idx, "name": b["name"], "start": b["start"], "end": b["end"]}
                             )
                 else:
                     path_so_far = f"{path_so_far}/{part}" if path_so_far else part
