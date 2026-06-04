@@ -138,7 +138,8 @@ class FileSelector(App):
         self.search_term = event.value
         if hasattr(self, "_search_timer"):
             self._search_timer.stop()
-        self._search_timer = self.set_timer(0.25, self._debounced_search)
+        # Debounce search by 300ms to prevent lagging on every keystroke
+        self._search_timer = self.set_timer(0.3, self._debounced_search)
 
     def _debounced_search(self) -> None:
         self._build_tree()
