@@ -452,6 +452,7 @@ def apply_file():
             file_obj["action"] = "command"
             APPLIED_FILES = [f for f in APPLIED_FILES if f.get("command") != cmd]
             APPLIED_FILES.append(file_obj)
+            console.print(f"  [bold magenta]>[/bold magenta] [magenta]Ran Command[/magenta] [bold]{cmd}[/bold]")
             return jsonify({"success": True})
         except subprocess.CalledProcessError as e:
             return jsonify({"error": f"Command failed with exit code {e.returncode}"}), 500
@@ -473,6 +474,7 @@ def apply_file():
         if action == "delete":
             if os.path.exists(full_path):
                 os.remove(full_path)
+            console.print(f"  [bold red]✗[/bold red] [red]Deleted File[/red] [bold]{path}[/bold]")
         else:
             os.makedirs(os.path.dirname(full_path), exist_ok=True)
             with open(full_path, "w", encoding="utf-8") as f:
@@ -482,8 +484,14 @@ def apply_file():
             old_lines = old_text.splitlines(keepends=True)
             new_lines = new_text.splitlines(keepends=True)
             diff = list(difflib.unified_diff(old_lines, new_lines, n=0))
-            file_obj["_added"] = sum(1 for line in diff if line.startswith('+') and not line.startswith('+++'))
-            file_obj["_removed"] = sum(1 for line in diff if line.startswith('-') and not line.startswith('---'))
+            added = sum(1 for line in diff if line.startswith('+') and not line.startswith('+++'))
+            removed = sum(1 for line in diff if line.startswith('-') and not line.startswith('---'))
+            file_obj["_added"] = added
+            file_obj["_removed"] = removed
+            diff_str = f" [bold green]+{added}[/bold green] [bold red]-{removed}[/bold red]" if (added > 0 or removed > 0) else ""
+            console.print(f"  [bold yellow]✓[/bold yellow] [yellow]Modified File[/yellow] [bold]{path}[/bold]{diff_str}")
+        elif action == "create":
+            console.print(f"  [bold green]✓[/bold green] [green]Created File[/green] [bold]{path}[/bold]")
             
         file_obj["_status"] = "applied"
         file_obj["action"] = action
