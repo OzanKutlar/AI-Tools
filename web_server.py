@@ -2,9 +2,14 @@ import os
 import re
 import difflib
 import subprocess
+import threading
 from flask import Flask, request, jsonify, render_template_string
+from rich.panel import Panel
 
-from cc_utils import get_files_recursive, safe_read_file, intelligent_json_fix, generate_tree_string
+from cc_utils import (
+    get_files_recursive, safe_read_file, intelligent_json_fix, 
+    generate_tree_string, console, print_auto_summary
+)
 from cc_prompts import DEFAULT_SYSTEM_PROMPT_TEMPLATE
 
 app = Flask(__name__)
@@ -14,6 +19,7 @@ ROOT_DIR = ""
 MAX_DEPTH = 100
 EXTENSIONS = None
 EXCLUDE_DIRS = None
+APPLIED_FILES = []
 
 def compute_new_text(file_obj, old_text):
     if "content" in file_obj:
@@ -98,6 +104,14 @@ HTML_TEMPLATE = r"""
         <div class="flex-1 overflow-y-auto border border-[#5a4d45] bg-[#241f1c] p-4 rounded" id="diff-container">
             <div class="text-gray-500 italic text-center mt-10">Paste a payload above and click Preview to view diffs.</div>
         </div>
+
+        <div class="mt-6 border-t border-[#5a4d45] pt-6">
+            <label class="font-bold mb-2 text-[#d08c60] block">Commit & Exit:</label>
+            <div class="flex space-x-4">
+                <input type="text" id="commit-message" class="flex-1 bg-[#1e1a18] border border-[#5a4d45] p-3 focus:outline-none focus:border-[#d08c60] text-gray-300 font-mono text-sm rounded" placeholder="Commit message (e.g., feat: Update things)">
+                <button onclick="commitAndExit()" class="bg-purple-700 hover:bg-purple-600 text-white font-bold py-2 px-6 rounded shadow transition-colors w-48">Commit Changes</button>
+            </div>
+        </div>
     </main>
 
     <script>
@@ -147,11 +161,20 @@ HTML_TEMPLATE = r"""
 
         function copyPrompt() {
             const text = document.getElementById('prompt-output').value;
-            navigator.clipboard.writeText(text).then(() => {
+            const cbs = Array.from(document.querySelectorAll('.file-cb:checked')).map(cb => cb.value);
+            
+            navigator.clipboard.writeText(text).then(async () => {
                 const btn = event.target;
                 const old = btn.innerText;
                 btn.innerText = "Copied!";
                 setTimeout(() => btn.innerText = old, 2000);
+
+                // Tell server to log to terminal
+                await fetch('/api/log_copy', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({files: cbs})
+                });
             });
         }
 
@@ -247,6 +270,33 @@ HTML_TEMPLATE = r"""
             alert('Finished applying files!');
         }
 
+        async function commitAndExit() {
+            const msg = document.getElementById('commit-message').value;
+            const btn = event.target;
+            btn.innerText = "Committing...";
+            btn.disabled = true;
+            
+            try {
+                const res = await fetch('/api/commit', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({message: msg})
+                });
+                const data = await res.json();
+                if (data.success) {
+                    document.body.innerHTML = `<div class="flex items-center justify-center h-screen text-2xl font-bold text-green-500">Changes committed. Server shutting down. You can close this tab.</div>`;
+                } else {
+                    alert('Commit failed: ' + data.error);
+                    btn.innerText = "Commit Changes";
+                    btn.disabled = false;
+                }
+            } catch (e) {
+                alert('Network error.');
+                btn.innerText = "Commit Changes";
+                btn.disabled = false;
+            }
+        }
+
         function escapeHtml(unsafe) {
             return unsafe
                  .replace(/&/g, "&amp;")
@@ -317,13 +367,22 @@ def generate():
 
     return jsonify({"prompt": "\n".join(buffer)})
 
+@app.route('/api/log_copy', methods=['POST'])
+def log_copy():
+    files = request.json.get("files", [])
+    console.print(Panel(
+        f"[bold green]Prompt copied to clipboard via Web UI![/bold green]\n"
+        f"Contains {len(files)} files.",
+        border_style="green"
+    ))
+    return jsonify({"success": True})
+
 @app.route('/api/preview', methods=['POST'])
 def preview():
     payload_str = request.json.get("payload", "")
     data, error_str = intelligent_json_fix(payload_str)
     
     if not data or "files" not in data:
-        # Try to provide a helpful parsing error via standard json if intelligent_fix fully failed
         import json
         try:
             json.loads(payload_str)
@@ -378,16 +437,21 @@ def preview():
 
 @app.route('/api/apply', methods=['POST'])
 def apply_file():
+    global APPLIED_FILES
     req = request.json
     action = req.get("action", "modify").lower()
+    file_obj = req.get("file_obj", {})
     
     if action == "command":
-        file_obj = req.get("file_obj", {})
         cmd = file_obj.get("command", "")
         if not cmd:
             return jsonify({"error": "Missing command."}), 400
         try:
             subprocess.run(cmd, shell=True, cwd=ROOT_DIR, check=True)
+            file_obj["_status"] = "applied"
+            file_obj["action"] = "command"
+            APPLIED_FILES = [f for f in APPLIED_FILES if f.get("command") != cmd]
+            APPLIED_FILES.append(file_obj)
             return jsonify({"success": True})
         except subprocess.CalledProcessError as e:
             return jsonify({"error": f"Command failed with exit code {e.returncode}"}), 500
@@ -399,6 +463,13 @@ def apply_file():
     full_path = os.path.join(ROOT_DIR, path)
 
     try:
+        old_text = ""
+        if os.path.exists(full_path):
+            try:
+                old_text = safe_read_file(full_path)
+            except Exception:
+                pass
+
         if action == "delete":
             if os.path.exists(full_path):
                 os.remove(full_path)
@@ -406,6 +477,59 @@ def apply_file():
             os.makedirs(os.path.dirname(full_path), exist_ok=True)
             with open(full_path, "w", encoding="utf-8") as f:
                 f.write(new_text)
+                
+        if action == "modify":
+            old_lines = old_text.splitlines(keepends=True)
+            new_lines = new_text.splitlines(keepends=True)
+            diff = list(difflib.unified_diff(old_lines, new_lines, n=0))
+            file_obj["_added"] = sum(1 for line in diff if line.startswith('+') and not line.startswith('+++'))
+            file_obj["_removed"] = sum(1 for line in diff if line.startswith('-') and not line.startswith('---'))
+            
+        file_obj["_status"] = "applied"
+        file_obj["action"] = action
+        file_obj["path"] = path
+        
+        APPLIED_FILES = [f for f in APPLIED_FILES if f.get("path") != path]
+        APPLIED_FILES.append(file_obj)
+
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/commit', methods=['POST'])
+def commit_changes():
+    msg = request.json.get("message", "Auto-commit from Web Agent")
+    if not msg.strip():
+        msg = "Auto-commit from Web Agent"
+        
+    paths_to_stage = [f.get("path") for f in APPLIED_FILES if f.get("path") and f.get("action", "").lower() != "command"]
+    commit_hash = None
+    
+    try:
+        if paths_to_stage:
+            subprocess.run(["git", "add"] + paths_to_stage, cwd=ROOT_DIR, check=True)
+            subprocess.run(["git", "commit", "-m", msg], cwd=ROOT_DIR, check=True)
+            try:
+                commit_hash = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT_DIR, text=True).strip()
+            except Exception:
+                pass
+                
+        result = {
+            "commit_message": msg,
+            "files": APPLIED_FILES,
+            "commit_hash": commit_hash
+        }
+        
+        # Print the exact same summary panel to the terminal
+        print_auto_summary(result)
+        
+        def shutdown():
+            import time
+            time.sleep(0.5)
+            os._exit(0)
+            
+        threading.Thread(target=shutdown, daemon=True).start()
+        
         return jsonify({"success": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -417,7 +541,7 @@ def start_server(root_dir, max_depth, extensions, exclude_dirs):
     EXTENSIONS = extensions
     EXCLUDE_DIRS = exclude_dirs
     
-    # Disable Flask startup text spam
+    # Disable Flask startup text spam for cleaner UI
     import logging
     log = logging.getLogger('werkzeug')
     log.setLevel(logging.ERROR)
