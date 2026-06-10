@@ -44,7 +44,7 @@ from tui_kanban import KanbanApp
 def main():
     parser = argparse.ArgumentParser(description="Scan folder and combine file contents to clipboard.")
     parser.add_argument("-l", "--limit", type=int, default=100, help="Max recursion depth")
-    parser.add_argument("specific_file", nargs='?', help="Specific file to copy (bypasses directory scan)")
+    parser.add_argument("paths", nargs='*', help="Specific files or directories to include (bypasses full directory scan)")
     parser.add_argument("-f", "--file_types", nargs='+', default=None, help="File extension filters (separated by space)")
     parser.add_argument("-b", "--batches", type=int, default=1, help="Number of batches")
     parser.add_argument("-e", "--exclude", nargs='+', default=None, help="Directory names to exclude from scan (separated by space)")
@@ -72,21 +72,21 @@ def main():
         console.print("Please install it using: [cyan]pip install keyboard[/cyan]")
         sys.exit(1)
 
-    if args.specific_file and args.specific_file.lower().endswith('.zip'):
-        zip_path_to_cleanup = os.path.abspath(args.specific_file)
+    if args.paths and len(args.paths) == 1 and args.paths[0].lower().endswith('.zip'):
+        zip_path_to_cleanup = os.path.abspath(args.paths[0])
         temp_dir = tempfile.mkdtemp(prefix="combineCopy_zip_")
         atexit.register(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
         
-        console.print(f"[bold cyan]Extracting {args.specific_file} to temporary directory...[/bold cyan]")
+        console.print(f"[bold cyan]Extracting {args.paths[0]} to temporary directory...[/bold cyan]")
         try:
-            with zipfile.ZipFile(args.specific_file, 'r') as zip_ref:
+            with zipfile.ZipFile(args.paths[0], 'r') as zip_ref:
                 zip_ref.extractall(temp_dir)
             extracted_items = os.listdir(temp_dir)
             if len(extracted_items) == 1 and os.path.isdir(os.path.join(temp_dir, extracted_items[0])):
                 root_dir = os.path.join(temp_dir, extracted_items[0])
             else:
                 root_dir = temp_dir
-            args.specific_file = None
+            args.paths = []
         except Exception as e:
             console.print(f"[bold red]Failed to extract zip file: {e}[/bold red]")
             sys.exit(1)
@@ -104,7 +104,7 @@ def main():
             console.print()
         return
 
-    if (args.auto or args.revert or args.orchestrate) and not (args.select or args.file_types or args.specific_file or args.system is not None or args.cli):
+    if (args.auto or args.revert or args.orchestrate) and not (args.select or args.file_types or args.paths or args.system is not None or args.cli):
         if args.orchestrate:
             app = OrchestratorAgentApp(root_dir, use_file_clipboard=args.file, cli_mode=args.cli)
             result = app.run()
@@ -247,17 +247,33 @@ def main():
             all_known_files = list(found_files)
 
         else:
-            if args.specific_file:
-                target_path = os.path.abspath(args.specific_file)
-                if os.path.isfile(target_path):
-                    found_files = [target_path]
-                    important_files = [target_path]
-                    console.print(f"[green]Targeting specific file:[/green] {args.specific_file}")
+            if args.paths:
+                found_files = []
+                important_files = []
+                
+                # Single file special casing for root_dir adjustment
+                if len(args.paths) == 1 and os.path.isfile(args.paths[0]):
+                    target_path = os.path.abspath(args.paths[0])
                     if not target_path.startswith(root_dir):
                         root_dir = os.path.dirname(target_path)
-                else:
-                    console.print(Panel(f"File not found: {args.specific_file}", title="Error", style="bold red"))
-                    return
+                
+                for p in args.paths:
+                    target_path = os.path.abspath(p)
+                    if os.path.isfile(target_path):
+                        found_files.append(target_path)
+                        important_files.append(target_path)
+                        console.print(f"[green]Targeting file:[/green] {p}")
+                    elif os.path.isdir(target_path):
+                        with console.status(f"[bold green]Scanning directory: {p}...[/bold green]", spinner="dots"):
+                            dir_files = get_files_recursive(target_path, 0, max_depth, ext_filters, exclude_dirs=args.exclude)
+                            found_files.extend(dir_files)
+                    else:
+                        console.print(Panel(f"Path not found: {p}", title="Error", style="bold red"))
+                        return
+                        
+                # Deduplicate while preserving order
+                found_files = list(dict.fromkeys(found_files))
+                important_files = list(dict.fromkeys(important_files))
             else:
                 with console.status("[bold green]Scanning directory structure...[/bold green]", spinner="dots"):
                     found_files = get_files_recursive(root_dir, 0, max_depth, ext_filters, exclude_dirs=args.exclude)
@@ -282,7 +298,8 @@ def main():
             console.print(Panel("No matching files found.", title="Result", style="bold red"))
             return
 
-        is_targeted = args.select or args.specific_file
+        only_files_targeted = bool(args.paths) and all(os.path.isfile(p) for p in args.paths)
+        is_targeted = args.select or only_files_targeted
         if total_files > 250 and not is_targeted:
             app = ConfirmCopyApp(total_files)
             confirmed = app.run()
