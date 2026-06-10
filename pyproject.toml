@@ -12,7 +12,8 @@ dependencies = [
     "rich",
     "textual",
     "keyboard",
-    "pyperclip"
+    "pyperclip",
+    "flask"
 ]
 
 [project.scripts]
@@ -34,5 +35,6 @@ py-modules = [
     "tui_kanban",
     "tui_prompt",
     "tui_selection",
-    "webapp"
+    "webapp",
+    "web_server"
 ]

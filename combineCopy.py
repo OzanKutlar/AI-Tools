@@ -53,7 +53,8 @@ def main():
     parser.add_argument("-r", "--revert", action="store_true", help="Run in continuous AI listener mode but reverse all changes")
     parser.add_argument("-o", "--orchestrate", action="store_true", help="Run in orchestrator mode to generate a precise execution plan and prompt.")
     parser.add_argument("--cli", action="store_true", help="Enable CLI Mode. Allows the AI to output terminal commands to be executed.")
-    parser.add_argument("--web", action="store_true", help="Enable web macro mode. Translates applies into simulated keyboard strokes for web IDEs.")
+    parser.add_argument("--web", action="store_true", help="Launch the local web UI server.")
+    parser.add_argument("--web-apply", action="store_true", dest="web_apply", help="Enable web macro mode. Translates applies into simulated keyboard strokes for web IDEs.")
     parser.add_argument("--tfs", action="store_true", help="Use TFVC (tf.exe) instead of git for checkout and checkin operations.")
     parser.add_argument("--system", nargs='?', const='DEFAULT', default=None, help="Inject system prompt and user instructions. Optionally provide a path to a custom system prompt file.")
     parser.add_argument("--file", action="store_true", help="Save prompt to a temp file and copy the file to clipboard")
@@ -67,8 +68,8 @@ def main():
     batch_count = args.batches
     zip_path_to_cleanup = None
 
-    if args.web and not KEYBOARD_AVAILABLE:
-        console.print("[bold red]Error:[/bold red] The '--web' flag requires the 'keyboard' module.")
+    if args.web_apply and not KEYBOARD_AVAILABLE:
+        console.print("[bold red]Error:[/bold red] The '--web-apply' flag requires the 'keyboard' module.")
         console.print("Please install it using: [cyan]pip install keyboard[/cyan]")
         sys.exit(1)
 
@@ -119,6 +120,22 @@ def main():
             return
     
     ext_filters = args.file_types
+    if ext_filters:
+        normalized_exts = []
+        for ext in ext_filters:
+            if not ext.startswith("."):
+                normalized_exts.append(f".{ext.lower()}")
+            else:
+                normalized_exts.append(ext.lower())
+        ext_filters = normalized_exts
+
+    if args.web:
+        from web_server import start_server
+        console.print("\n[bold green]Starting CombineCopy Web UI...[/bold green]")
+        console.print("Access it in your browser at: [bold cyan]http://127.0.0.1:5000[/bold cyan]\n")
+        start_server(root_dir, max_depth, ext_filters, args.exclude)
+        return
+
     if ext_filters:
         normalized_exts = []
         for ext in ext_filters:
@@ -496,10 +513,10 @@ def main():
                 console.print(Panel("Orchestrator payload successfully copied to clipboard.", title="Success", style="bold green"))
         else:
             phase_name = "Auto Agent Execution (Revert Mode)" if args.revert else "Auto Agent Execution"
-            if args.web:
+            if args.web_apply:
                 phase_name += " [WEB MACRO MODE]"
             console.print(f"\n[bold cyan]Phase: {phase_name}[/bold cyan]")
-            app = AutoAgentApp(root_dir, all_known_files, revert_mode=args.revert, ignore_initial_clipboard=True, web_mode=args.web, tfs_mode=args.tfs)
+            app = AutoAgentApp(root_dir, all_known_files, revert_mode=args.revert, ignore_initial_clipboard=True, web_mode=args.web_apply, tfs_mode=args.tfs)
             result = app.run()
             if result:
                 print_auto_summary(result)
