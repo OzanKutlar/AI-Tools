@@ -140,18 +140,35 @@ def is_binary_file(filepath: str) -> bool:
         return False
 
 def safe_read_file(path: str) -> str:
-    """Tries to read a file as UTF-8, falls back to Windows-1252. Ignores binary files."""
+    """Reads a file as UTF-8. Falls back to surrogateescape so invalid bytes
+    can round-trip losslessly when written back. Ignores binary files."""
     if is_binary_file(path):
         return "(This is a binary file)"
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8", newline="") as f:
             return f.read()
     except UnicodeDecodeError:
         try:
-            with open(path, "r", encoding="cp1252") as f:
+            with open(path, "r", encoding="utf-8", errors="surrogateescape", newline="") as f:
                 return f.read()
-        except UnicodeDecodeError:
+        except Exception:
             return "(This is a binary file)"
+
+def detect_newline(path: str) -> str:
+    """Peeks at a file in binary mode and returns its dominant line ending.
+    Returns '\\r\\n', '\\n', '\\r', or '' (no newline found)."""
+    try:
+        with open(path, "rb") as f:
+            chunk = f.read(65536)
+        if b"\r\n" in chunk:
+            return "\r\n"
+        if b"\n" in chunk:
+            return "\n"
+        if b"\r" in chunk:
+            return "\r"
+        return ""
+    except Exception:
+        return ""
 
 def intelligent_json_fix(content: str) -> tuple[dict | None, str]:
     """Iteratively attempts to heal common LLM JSON syntax errors (like unescaped quotes)."""

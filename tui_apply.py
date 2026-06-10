@@ -30,8 +30,22 @@ from cc_utils import (
     intelligent_json_fix,
     render_word_diff,
     copy_to_clipboard,
-    copy_file_to_clipboard
+    copy_file_to_clipboard,
+    detect_newline
 )
+
+def _write_text_preserving(path: str, text: str, original_newline: str | None = None) -> None:
+    """Writes `text` to `path` preserving the file's original line endings exactly.
+    Uses surrogateescape so non-UTF8 bytes that were read back can round-trip
+    losslessly, and `newline=\"\"` to disable Python's automatic newline translation.
+    """
+    if original_newline is None:
+        original_newline = "\n"
+    if original_newline and original_newline != "\n":
+        normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+        text = normalized.replace("\n", original_newline)
+    with open(path, "w", encoding="utf-8", errors="surrogateescape", newline="") as f:
+        f.write(text)
 
 from cc_prompts import DEFAULT_SYSTEM_PROMPT_TEMPLATE, CLI_SYSTEM_PROMPT_TEMPLATE
 from vcs_tfs import tfs_checkout, tfs_add, tfs_delete, tfs_checkin
@@ -2031,14 +2045,18 @@ class AutoAgentApp(App):
             return
         os.makedirs(os.path.dirname(full_path), exist_ok=True)
         if action == "create":
-            with open(full_path, "w", encoding="utf-8") as f:
-                f.write(file_obj.get("content", ""))
+            # Use newline="" to prevent automatic \n -> \r\n translation on Windows.
+            # The AI's JSON content uses \n; write it as-is so emojis and exact bytes survive.
+            _write_text_preserving(full_path, file_obj.get("content", ""), original_newline="\n")
         elif action == "modify":
             # TFS server workspace: checkout before editing
             if self.tfs_mode and os.path.exists(full_path):
                 errors = tfs_checkout(self.root_dir, [path])
                 if errors:
                     self.notify(f"TFS checkout error: {errors[0]}", severity="error")
+            original_newline = detect_newline(full_path) if os.path.exists(full_path) else "\n"
+            if not original_newline:
+                original_newline = "\n"
             old_text = ""
             if os.path.exists(full_path):
                 old_text = safe_read_file(full_path)
@@ -2055,8 +2073,7 @@ class AutoAgentApp(App):
                     removed += 1
             file_obj["_added"] = added
             file_obj["_removed"] = removed
-            with open(full_path, "w", encoding="utf-8") as f:
-                f.write(new_text)
+            _write_text_preserving(full_path, new_text, original_newline=original_newline)
         file_obj["_status"] = "applied"
         self._record_applied_file(file_obj)
 
