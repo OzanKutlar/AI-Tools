@@ -295,7 +295,6 @@ def get_files_recursive(directory, current_depth, max_depth, extensions, exclude
     files = []
     dirs = []
     ignore_dirs = {".git", "node_modules", ".venv", "venv", "env", "__pycache__", ".idea", ".vscode"}
-    ignore_files = {".cc_kanban.json"}
     if exclude_dirs:
         ignore_dirs.update(exclude_dirs)
     for item in items:
@@ -303,8 +302,6 @@ def get_files_recursive(directory, current_depth, max_depth, extensions, exclude
         if os.path.isdir(full_path) and item in ignore_dirs:
             continue
         if os.path.isfile(full_path):
-            if item in ignore_files:
-                continue
             files.append(full_path)
         elif os.path.isdir(full_path):
             dirs.append(full_path)

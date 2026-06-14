@@ -39,7 +39,6 @@ from tui_selection import run_file_selector
 from tui_prompt import SystemPromptApp
 from tui_confirm import ConfirmCopyApp
 from tui_apply import AutoAgentApp, OrchestratorAgentApp
-from tui_kanban import KanbanApp
 
 def main():
     parser = argparse.ArgumentParser(description="Scan folder and combine file contents to clipboard.")
@@ -58,7 +57,6 @@ def main():
     parser.add_argument("--tfs", action="store_true", help="Use TFVC (tf.exe) instead of git for checkout and checkin operations.")
     parser.add_argument("--system", nargs='?', const='DEFAULT', default=None, help="Inject system prompt and user instructions. Optionally provide a path to a custom system prompt file.")
     parser.add_argument("--file", action="store_true", help="Save prompt to a temp file and copy the file to clipboard")
-    parser.add_argument("-k", "--kanban", action="store_true", help="Launch the persistent Kanban board interface")
     parser.add_argument("--file-culling", "--file-cull", action="store_true", dest="file_culling", help="Enable file culling / AST selection mode")
     parser.add_argument("-js", "--json-select", action="store_true", help="Parse a JSON selection payload from clipboard to automatically select files/functions")
     args = parser.parse_args()
@@ -93,17 +91,6 @@ def main():
             sys.exit(1)
 
     all_known_files = []
-
-    if args.kanban:
-        app = KanbanApp(root_dir, cli_mode=args.cli)
-        logs = app.run()
-        if logs:
-            console.print()
-            console.print(Rule("[bold blue]Kanban Session Summary[/bold blue]"))
-            for log_msg in logs:
-                console.print(f"  • {log_msg}")
-            console.print()
-        return
 
     if (args.auto or args.revert or args.orchestrate) and not (args.select or args.file_types or args.paths or args.system is not None or args.cli):
         if args.orchestrate:
