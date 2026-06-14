@@ -174,7 +174,7 @@ def intelligent_json_fix(content: str) -> tuple[dict | None, str]:
     """Iteratively attempts to heal common LLM JSON syntax errors (like unescaped quotes)."""
     lines = content.split('\n')
     for i, line in enumerate(lines):
-        match = re.match(r'^(\s*"(?:markdown|commit_message|content|search|replace|pattern|replacement)"\s*:\s*")(.*)$', line)
+        match = re.match(r'^(\s*"[^"]+"\s*:\s*")(.*)$', line)
         if match:
             prefix = match.group(1)
             rest = match.group(2)
@@ -184,6 +184,9 @@ def intelligent_json_fix(content: str) -> tuple[dict | None, str]:
                 value = rest[:-len(suffix)]
                 fixed_value = re.sub(r'(?<!\\)"', r'\"', value)
                 lines[i] = prefix + fixed_value + suffix
+            else:
+                fixed_value = re.sub(r'(?<!\\)"', r'\"', rest)
+                lines[i] = prefix + fixed_value
                 
     current = '\n'.join(lines)
 
