@@ -31,7 +31,8 @@ from cc_utils import (
     render_word_diff,
     copy_to_clipboard,
     copy_file_to_clipboard,
-    detect_newline
+    detect_newline,
+    extract_json_from_text
 )
 
 def _write_text_preserving(path: str, text: str, original_newline: str | None = None) -> None:
@@ -886,43 +887,6 @@ class OrchestratorAgentApp(App):
     def on_mount(self) -> None:
         self.polling_timer = self.set_interval(0.5, self.check_clipboard)
 
-    def _extract_json_objects(self, text: str) -> list[str]:
-        results = []
-        idx = 0
-        while idx < len(text):
-            start_idx = text.find('{', idx)
-            if start_idx == -1:
-                break
-            depth = 0
-            in_string = False
-            escape_next = False
-            end_idx = -1
-            for i in range(start_idx, len(text)):
-                char = text[i]
-                if escape_next:
-                    escape_next = False
-                    continue
-                if char == '\\':
-                    escape_next = True
-                    continue
-                if char == '"':
-                    in_string = not in_string
-                    continue
-                if not in_string:
-                    if char == '{':
-                        depth += 1
-                    elif char == '}':
-                        depth -= 1
-                        if depth == 0:
-                            end_idx = i
-                            break
-            if end_idx != -1:
-                results.append(text[start_idx:end_idx + 1])
-                idx = end_idx + 1
-            else:
-                idx = start_idx + 1
-        return results
-
     def check_clipboard(self) -> None:
         if getattr(self, 'is_loading_payload', False):
             return
@@ -933,7 +897,7 @@ class OrchestratorAgentApp(App):
             self.last_clipboard = content
             
             if '"phase":' in content and ('"ORCHESTRATE"' in content or '"EXPLORATION"' in content):
-                json_blocks = self._extract_json_objects(content)
+                json_blocks = extract_json_from_text(content)
                 for json_str in json_blocks:
                     try:
                         data = json.loads(json_str)
@@ -1225,43 +1189,6 @@ class AutoAgentApp(App):
         self.polling_timer = self.set_interval(0.5, self.check_clipboard)
         self.query_one("#diff-view", RichLog).write("Select a file to view diffs.")
 
-    def _extract_json_objects(self, text: str) -> list[str]:
-        results = []
-        idx = 0
-        while idx < len(text):
-            start_idx = text.find('{', idx)
-            if start_idx == -1:
-                break
-            depth = 0
-            in_string = False
-            escape_next = False
-            end_idx = -1
-            for i in range(start_idx, len(text)):
-                char = text[i]
-                if escape_next:
-                    escape_next = False
-                    continue
-                if char == '\\':
-                    escape_next = True
-                    continue
-                if char == '"':
-                    in_string = not in_string
-                    continue
-                if not in_string:
-                    if char == '{':
-                        depth += 1
-                    elif char == '}':
-                        depth -= 1
-                        if depth == 0:
-                            end_idx = i
-                            break
-            if end_idx != -1:
-                results.append(text[start_idx:end_idx + 1])
-                idx = end_idx + 1
-            else:
-                idx = start_idx + 1
-        return results
-
     def check_clipboard(self) -> None:
         try:
             content = pyperclip.paste().strip()
@@ -1270,7 +1197,7 @@ class AutoAgentApp(App):
             self.last_clipboard = content
             
             if '"phase":' in content and '"EXECUTION"' in content:
-                json_blocks = self._extract_json_objects(content)
+                json_blocks = extract_json_from_text(content)
                 for json_str in json_blocks:
                     try:
                         data = json.loads(json_str)

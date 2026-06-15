@@ -146,6 +146,7 @@ def main():
         if args.json_select:
             console.print("[bold cyan]Phase: JSON Selection Parsing[/bold cyan]")
             import pyperclip
+            from cc_utils import extract_json_from_text, intelligent_json_fix
             try:
                 clipboard_content = pyperclip.paste().strip()
             except Exception as e:
@@ -156,44 +157,10 @@ def main():
                 console.print("[bold red]Clipboard is empty.[/bold red]")
                 return
 
-            results = []
-            idx = 0
-            while idx < len(clipboard_content):
-                start_idx = clipboard_content.find('{', idx)
-                if start_idx == -1:
-                    break
-                depth = 0
-                in_string = False
-                escape_next = False
-                end_idx = -1
-                for i in range(start_idx, len(clipboard_content)):
-                    char = clipboard_content[i]
-                    if escape_next:
-                        escape_next = False
-                        continue
-                    if char == '\\':
-                        escape_next = True
-                        continue
-                    if char == '"':
-                        in_string = not in_string
-                        continue
-                    if not in_string:
-                        if char == '{':
-                            depth += 1
-                        elif char == '}':
-                            depth -= 1
-                            if depth == 0:
-                                end_idx = i
-                                break
-                if end_idx != -1:
-                    results.append(clipboard_content[start_idx:end_idx + 1])
-                    idx = end_idx + 1
-                else:
-                    idx = start_idx + 1
+            results = extract_json_from_text(clipboard_content)
 
             selection_data = None
             for json_str in results:
-                from cc_utils import intelligent_json_fix
                 data, _ = intelligent_json_fix(json_str)
                 if data and isinstance(data, dict):
                     if data.get("phase") == "SELECT" or "files" in data or "functions" in data:

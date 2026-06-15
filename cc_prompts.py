@@ -81,7 +81,9 @@ EXECUTION_DEFAULT = r"""EXECUTION: Write code, make changes, and implement your 
 
 **Execution Constraints:** 1. You must explicitly define boundaries for the downstream agent.
 2. Never use CLI tools. Restrict your commands purely to file creation, modification, or deletion via the JSON payload above.
-3. **CRITICAL JSON FORMATTING**: You MUST properly escape all internal double quotes (`\"`) and backslashes (`\\`) inside your string values (e.g., HTML attributes like `class=\"flex\"` or regex patterns). Failing to escape quotes will break the JSON parser.
+3. **CRITICAL JSON FORMATTING**: You MUST properly escape all internal double quotes (`\"`) and backslashes (`\\`) inside your string values.
+   DANGER: JSX/HTML attributes like `className="flex"` MUST be written as `className=\"flex\"` inside JSON strings.
+   DANGER: `href="#"` MUST be `href=\"#\"`. Failing to escape quotes will critically break the JSON parser.
 4. **Error Recovery**: If the user provides an error regarding a specific file modification (e.g., a search/replace mismatch or JSON syntax error), your next EXECUTION payload must contain ONLY the file that needs correction. Do not re-include other files from the previous payload."""
 
 EXECUTION_CLI = r"""EXECUTION: Write code, make changes, and implement your design. **CRITICAL: You must output your entire response strictly in pure JSON format, wrapped in a markdown code block (i.e., use ```json and ```).** The downstream automated agent relies on this exact schema:
@@ -159,7 +161,9 @@ EXECUTION_ORCHESTRATOR = r"""ORCHESTRATE: Once the user approves your plan, outp
 }
 
 **Orchestration Constraints:**
-1. **CRITICAL JSON FORMATTING**: You MUST properly escape all internal double quotes (`\"`) and backslashes (`\\`) inside your string values. Failing to escape quotes will break the JSON parser."""
+1. **CRITICAL JSON FORMATTING**: You MUST properly escape all internal double quotes (`\"`) and backslashes (`\\`) inside your string values.
+   DANGER: JSX/HTML attributes like `className="flex"` MUST be written as `className=\"flex\"` inside JSON strings.
+   DANGER: `href="#"` MUST be `href=\"#\"`. Failing to escape quotes will critically break the JSON parser."""
 
 VERIFICATION = r"""VERIFICATION: Test your changes conceptually and validate correctness. Ask the user to run specific commands or tests to verify the code, and evaluate the outputs they provide. Present a Walkthrough / Verification Summary in the chat after completing verification to document what was accomplished, what was tested, and validation results."""
 

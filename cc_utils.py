@@ -170,8 +170,80 @@ def detect_newline(path: str) -> str:
     except Exception:
         return ""
 
+def extract_json_from_text(text: str) -> list[str]:
+    """Extracts JSON objects from text using multiple strategies."""
+    results = []
+    
+    # Strategy A: Markdown code blocks
+    import re
+    code_blocks = re.findall(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
+    if code_blocks:
+        return code_blocks
+        
+    # Strategy B: First { to last } (Heuristic for single payload)
+    if '"phase"' in text and any(k in text for k in ['"EXECUTION"', '"ORCHESTRATE"', '"EXPLORATION"', '"SELECT"']):
+        start_idx = text.find('{')
+        end_idx = text.rfind('}')
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            results.append(text[start_idx:end_idx+1])
+            return results
+
+    # Strategy C: State machine fallback
+    idx = 0
+    while idx < len(text):
+        start_idx = text.find('{', idx)
+        if start_idx == -1:
+            break
+        depth = 0
+        in_string = False
+        escape_next = False
+        end_idx = -1
+        for i in range(start_idx, len(text)):
+            char = text[i]
+            if escape_next:
+                escape_next = False
+                continue
+            if char == '\\':
+                escape_next = True
+                continue
+            if char == '"':
+                in_string = not in_string
+                continue
+            if not in_string:
+                if char == '{':
+                    depth += 1
+                elif char == '}':
+                    depth -= 1
+                    if depth == 0:
+                        end_idx = i
+                        break
+        if end_idx != -1:
+            results.append(text[start_idx:end_idx + 1])
+            idx = end_idx + 1
+        else:
+            idx = start_idx + 1
+    return results
+
 def intelligent_json_fix(content: str) -> tuple[dict | None, str]:
     """Iteratively attempts to heal common LLM JSON syntax errors (like unescaped quotes)."""
+    import re
+    
+    def escape_html_attr(m):
+        attr = m.group(1)
+        val = m.group(2)
+        return f'{attr}=\\"{val}\\"'
+
+    # Pre-pass: Fix common HTML/JSX unescaped attributes (e.g., className="flex" -> className=\"flex\")
+    content = re.sub(r'([a-zA-Z0-9_\-]+)\s*=\s*"(.*?)(?<!\\)"', escape_html_attr, content)
+    
+    def escape_conditional(m):
+        op = m.group(1)
+        val = m.group(2)
+        return f'{op} \\"{val}\\"'
+
+    # Pre-pass: Fix common programming conditionals/returns (e.g., == "foo" -> == \"foo\")
+    content = re.sub(r'(==|===|!=|!==|\+=|-=|\*=|/=|return)\s*"(.*?)(?<!\\)"', escape_conditional, content)
+
     lines = content.split('\n')
     for i, line in enumerate(lines):
         match = re.match(r'^(\s*"[^"]+"\s*:\s*")(.*)$', line)
