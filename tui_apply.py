@@ -47,7 +47,7 @@ def _write_text_preserving(path: str, text: str, original_newline: str | None = 
     with open(path, "w", encoding="utf-8", errors="surrogateescape", newline="") as f:
         f.write(text)
 
-from cc_prompts import DEFAULT_SYSTEM_PROMPT_TEMPLATE, CLI_SYSTEM_PROMPT_TEMPLATE
+from cc_prompts import build_prompt
 from vcs_tfs import tfs_checkout, tfs_add, tfs_delete, tfs_checkin
 
 class CommandExecutionScreen(ModalScreen[bool]):
@@ -1050,52 +1050,36 @@ class OrchestratorAgentApp(App):
             combined_prompt.append(f"ORCHESTRATOR ARCHITECTURE & INSTRUCTIONS:\n{prompt}")
         final_prompt_text = "\n\n".join(combined_prompt)
         
-        buffer = []
-        buffer.append("--- USER REQUEST ---")
-        buffer.append(final_prompt_text)
-        buffer.append("\n--- SYSTEM INSTRUCTIONS ---")
+        agent_type = "cli" if getattr(self, 'cli_mode', False) else "default"
         
-        sys_tmpl = CLI_SYSTEM_PROMPT_TEMPLATE if getattr(self, 'cli_mode', False) else DEFAULT_SYSTEM_PROMPT_TEMPLATE
-        sys_prompt = sys_tmpl.replace('{FILE_CULLING_INSTRUCTION}\n', '').replace('{FILE_CULLING_INSTRUCTION}', '')
-        buffer.append(sys_prompt)
-        buffer.append("\n--- USER REQUEST ---")
-        buffer.append(final_prompt_text)
-        buffer.append("\n--- FILE CONTEXT ---")
-        
+        file_context_buffer = []
         separator = "-" * 35
         for file_path in files:
             full_path = os.path.join(self.root_dir, file_path)
-            buffer.append(separator)
-            buffer.append(f"FILE: {file_path}")
-            buffer.append(separator)
+            file_context_buffer.append(separator)
+            file_context_buffer.append(f"FILE: {file_path}")
+            file_context_buffer.append(separator)
             _, ext = os.path.splitext(file_path)
             lang = ext.lstrip('.').lower()
-            buffer.append(f"```{lang}")
+            file_context_buffer.append(f"```{lang}")
             
             if os.path.exists(full_path):
                 try:
-                    buffer.append(safe_read_file(full_path))
+                    file_context_buffer.append(safe_read_file(full_path))
                 except Exception as e:
-                    buffer.append(f"[Error reading file: {e}]")
+                    file_context_buffer.append(f"[Error reading file: {e}]")
             else:
-                buffer.append(f"[File not found: {file_path}]")
-            buffer.append("```")
-            buffer.append("")
+                file_context_buffer.append(f"[File not found: {file_path}]")
+            file_context_buffer.append("```\n")
 
-        buffer.append("--- USER REQUEST (Reminder) ---")
-        buffer.append(final_prompt_text)
-        buffer.append("\n--- SYSTEM REMINDER ---")
-        buffer.append("CRITICAL: You must ALWAYS start in PLANNING mode.")
-        buffer.append("Do NOT output EXECUTION or ORCHESTRATION JSON yet.")
-        buffer.append("When you enter PLANNING mode, present your Implementation Plan and Task Checklist directly as standard inline markdown sections. Do NOT output them in file-formatted codeblocks and do NOT assign filenames or paths to them (e.g. do not label them as C:\\Users\\Ozan\\task.md or C:\\Users\\Ozan\\implementation_plan.md). In EXECUTION or ORCHESTRATION mode, you MUST wrap the JSON output in a markdown code block (```json).")
-        buffer.append("Create an inline implementation plan and wait for the user to review and approve it.")
-        buffer.append("When in EXECUTION mode, your commit message in the JSON payload MUST strictly adhere to this exact multi-line template structure:")
-        buffer.append("type(scope) : description")
-        buffer.append("extra desc")
-        buffer.append(" extra desc")
-        buffer.append("")
-            
-        final_text = "\n".join(buffer)
+        final_text = build_prompt(
+            user_request=final_prompt_text,
+            file_context="\n".join(file_context_buffer),
+            ast_map="",
+            file_cull=False,
+            system_prompt="",
+            agent_type=agent_type
+        )
         if getattr(self, 'use_file_clipboard', False):
             try:
                 fd, temp_path = tempfile.mkstemp(prefix="combineCopy_prompt_", suffix=".txt", text=True)

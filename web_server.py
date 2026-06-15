@@ -10,7 +10,7 @@ from cc_utils import (
     get_files_recursive, safe_read_file, intelligent_json_fix, 
     generate_tree_string, console, print_auto_summary
 )
-from cc_prompts import DEFAULT_SYSTEM_PROMPT_TEMPLATE
+from cc_prompts import build_prompt
 
 app = Flask(__name__)
 
@@ -329,43 +329,38 @@ def generate():
     paths = req_data.get("files", [])
     user_req = req_data.get("request", "")
     
-    buffer = []
-    if user_req:
-        buffer.append("--- USER REQUEST ---")
-        buffer.append(user_req)
-        buffer.append("\n--- SYSTEM INSTRUCTIONS ---")
-        buffer.append(DEFAULT_SYSTEM_PROMPT_TEMPLATE.replace('{FILE_CULLING_INSTRUCTION}\n', '').replace('{FILE_CULLING_INSTRUCTION}', ''))
-        buffer.append("\n--- USER REQUEST ---")
-        buffer.append(user_req)
-
     all_files = get_files_recursive(ROOT_DIR, 0, MAX_DEPTH, EXTENSIONS, EXCLUDE_DIRS)
-    buffer.append("\n--- DIRECTORY AST MAP ---")
-    buffer.append(generate_tree_string(all_files, ROOT_DIR))
+    ast_map = generate_tree_string(all_files, ROOT_DIR)
 
-    buffer.append("\n--- FILE CONTEXT ---")
+    file_context_buffer = []
     sep = "-" * 35
     for p in paths:
         full_path = os.path.join(ROOT_DIR, p)
-        buffer.append(sep)
-        buffer.append(f"FILE: {p}")
-        buffer.append(sep)
+        file_context_buffer.append(sep)
+        file_context_buffer.append(f"FILE: {p}")
+        file_context_buffer.append(sep)
         _, ext = os.path.splitext(p)
         lang = ext.lstrip('.').lower()
-        buffer.append(f"```{lang}")
+        file_context_buffer.append(f"```{lang}")
         if os.path.exists(full_path):
             try:
-                buffer.append(safe_read_file(full_path))
+                file_context_buffer.append(safe_read_file(full_path))
             except Exception as e:
-                buffer.append(f"[Error reading file: {e}]")
+                file_context_buffer.append(f"[Error reading file: {e}]")
         else:
-            buffer.append("[File not found]")
-        buffer.append("```\n")
+            file_context_buffer.append("[File not found]")
+        file_context_buffer.append("```\n")
 
-    if user_req:
-        buffer.append("--- USER REQUEST (Reminder) ---")
-        buffer.append(user_req)
+    prompt = build_prompt(
+        user_request=user_req,
+        file_context="\n".join(file_context_buffer),
+        ast_map=ast_map,
+        file_cull=True,
+        system_prompt="",
+        agent_type="default"
+    )
 
-    return jsonify({"prompt": "\n".join(buffer)})
+    return jsonify({"prompt": prompt})
 
 @app.route('/api/log_copy', methods=['POST'])
 def log_copy():

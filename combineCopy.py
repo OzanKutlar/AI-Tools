@@ -30,9 +30,12 @@ from cc_utils import (
 )
 
 from cc_prompts import (
-    ORCHESTRATE_SYSTEM_PROMPT_TEMPLATE,
-    DEFAULT_SYSTEM_PROMPT_TEMPLATE,
-    CLI_SYSTEM_PROMPT_TEMPLATE
+    get_system_prompt,
+    build_prompt,
+    get_user_prompt,
+    get_ast,
+    get_file_context,
+    get_system_prompt_important
 )
 
 from tui_selection import run_file_selector
@@ -313,34 +316,27 @@ def main():
     
         display_summary(root_dir, max_depth, ext_filters, batch_count, total_files)
     
-        user_request_data = None
-        if args.system is not None or args.cli:
-            console.print("[bold cyan]Phase: Instruction & System Prompt[/bold cyan]")
-            sys_arg = args.system if args.system else 'DEFAULT'
-            if sys_arg == 'DEFAULT' or sys_arg == '':
-                if args.orchestrate:
-                    sys_prompt_text = ORCHESTRATE_SYSTEM_PROMPT_TEMPLATE.strip()
-                elif args.cli:
-                    sys_prompt_text = CLI_SYSTEM_PROMPT_TEMPLATE.strip()
-                else:
-                    sys_prompt_text = DEFAULT_SYSTEM_PROMPT_TEMPLATE.strip()
-            else:
-                try:
-                    with open(sys_arg, 'r', encoding='utf-8') as f:
-                        sys_prompt_text = f.read().strip()
-                except Exception as e:
-                    console.print(f"[red]Error reading system prompt file: {e}[/red]")
-                    return
-            
-            if args.file_culling:
-                from cc_prompts import FILE_CULLING_INSTRUCTIONS
-                sys_prompt_text += "\n\n" + FILE_CULLING_INSTRUCTIONS.strip()
-                    
-            app = SystemPromptApp(root_dir, found_files, sys_prompt_text)
-            user_request_data = app.run()
-            if not user_request_data:
-                console.print(Panel("System prompt setup cancelled.", title="Cancelled", style="bold yellow"))
+    agent_type = "orchestrator" if args.orchestrate else "cli" if args.cli else "default"
+
+    user_request_data = None
+    if args.system is not None or args.cli:
+        console.print("[bold cyan]Phase: Instruction & System Prompt[/bold cyan]")
+        sys_arg = args.system if args.system else 'DEFAULT'
+        if sys_arg == 'DEFAULT' or sys_arg == '':
+            sys_prompt_text = get_system_prompt(agent_type=agent_type, file_cull=args.file_culling)
+        else:
+            try:
+                with open(sys_arg, 'r', encoding='utf-8') as f:
+                    sys_prompt_text = f.read().strip()
+            except Exception as e:
+                console.print(f"[red]Error reading system prompt file: {e}[/red]")
                 return
+                
+        app = SystemPromptApp(root_dir, found_files, sys_prompt_text)
+        user_request_data = app.run()
+        if not user_request_data:
+            console.print(Panel("System prompt setup cancelled.", title="Cancelled", style="bold yellow"))
+            return
 
         files_per_batch = math.ceil(total_files / batch_count)
         console.print(f"\n[dim]Splitting into {batch_count} batch(es). ~{files_per_batch} files/batch.[/dim]\n")
@@ -353,21 +349,6 @@ def main():
             
             if not current_batch_files:
                 break
-    
-            content_buffer = []
-            if batch_num == 1 and user_request_data:
-                content_buffer.append("--- USER REQUEST ---")
-                content_buffer.append(user_request_data["request"])
-                content_buffer.append("\n--- SYSTEM INSTRUCTIONS ---")
-                content_buffer.append(user_request_data["system"])
-                content_buffer.append("\n--- USER REQUEST ---")
-                content_buffer.append(user_request_data["request"])
-                
-                ast_tree = generate_tree_string(found_files, root_dir)
-                content_buffer.append("\n--- DIRECTORY AST MAP ---")
-                content_buffer.append(ast_tree)
-                
-                content_buffer.append("\n--- FILE CONTEXT ---")
     
             console.print(Rule(f"[bold yellow]Batch {batch_num}/{batch_count}[/bold yellow]"))
             stop_event = threading.Event()
@@ -383,6 +364,8 @@ def main():
 
                 def worker_fn():
                     important_set = set(important_files) if important_files is not None else set()
+                    file_context_buffer = []
+                    
                     for file_path in current_batch_files:
                         if stop_event.is_set(): return
                         if file_path in important_set or file_path in partial_files:
@@ -396,10 +379,10 @@ def main():
                                 
                             _, ext = os.path.splitext(rel_path)
                             lang = ext.lstrip('.').lower()
-                            content_buffer.append(separator)
-                            content_buffer.append(f"FILE: {rel_path}")
-                            content_buffer.append(separator)
-                            content_buffer.append(f"```{lang}")
+                            file_context_buffer.append(separator)
+                            file_context_buffer.append(f"FILE: {rel_path}")
+                            file_context_buffer.append(separator)
+                            file_context_buffer.append(f"```{lang}")
                             try:
                                 content = safe_read_file(file_path)
                                 if is_partial:
@@ -420,33 +403,53 @@ def main():
                                         if i > 0:
                                             partial_content.append("\n// ... (hidden lines) ...\n\n")
                                         partial_content.extend(lines[interval[0]:interval[1]+1])
-                                    content_buffer.append("".join(partial_content))
+                                    file_context_buffer.append("".join(partial_content))
                                 else:
-                                    content_buffer.append(content)
+                                    file_context_buffer.append(content)
                             except Exception as e:
                                 progress.console.print(f"  [red]![/red] Error reading {rel_path}: {e}")
-                                content_buffer.append(f"[Error reading file: {e}]")
-                            content_buffer.append("```")
-                            content_buffer.append("\n")
+                                file_context_buffer.append(f"[Error reading file: {e}]")
+                            file_context_buffer.append("```")
+                            file_context_buffer.append("\n")
                         else:
                             rel_path = os.path.relpath(file_path, root_dir)
                             progress.console.print(f"  [cyan]ℹ[/cyan] Included [bold]{rel_path}[/bold] in AST Map")
                         progress.advance(task)
                     if stop_event.is_set(): return
-                    if batch_num == batch_count and user_request_data:
-                        content_buffer.append("--- USER REQUEST (Reminder) ---")
-                        content_buffer.append(user_request_data["request"])
-                        content_buffer.append("\n--- SYSTEM REMINDER ---")
-                        content_buffer.append("CRITICAL: You must ALWAYS start in PLANNING mode.")
-                        content_buffer.append("Do NOT output EXECUTION or ORCHESTRATION JSON yet.")
-                        content_buffer.append("When you enter PLANNING mode, present your Implementation Plan and Task Checklist directly as standard inline markdown sections. Do NOT output them in file-formatted codeblocks and do NOT assign filenames or paths to them (e.g. do not label them as C:\\Users\\Ozan\\task.md or C:\\Users\\Ozan\\implementation_plan.md). In EXECUTION mode, you MUST wrap the JSON output in a markdown code block (```json).")
-                        content_buffer.append("Create an inline implementation plan and wait for the user to review and approve it.")
-                        content_buffer.append("When in EXECUTION mode, your commit message in the JSON payload MUST strictly adhere to this exact multi-line template structure:")
-                        content_buffer.append("type(scope) : description")
-                        content_buffer.append("extra desc")
-                        content_buffer.append(" extra desc")
-                        content_buffer.append("\n")
-                    full_text = "\n".join(content_buffer)
+                    
+                    file_context_str = "\n".join(file_context_buffer)
+                    full_text = ""
+                    
+                    if batch_count == 1:
+                        if user_request_data:
+                            full_text = build_prompt(
+                                user_request=user_request_data["request"],
+                                file_context=file_context_str,
+                                ast_map=generate_tree_string(found_files, root_dir),
+                                file_cull=args.file_culling,
+                                system_prompt=user_request_data["system"],
+                                agent_type=agent_type
+                            )
+                        else:
+                            full_text = file_context_str
+                    else:
+                        parts = []
+                        if batch_num == 1 and user_request_data:
+                            parts.append(get_user_prompt(user_request_data["request"]))
+                            if args.file_culling:
+                                parts.append(get_ast(generate_tree_string(found_files, root_dir)))
+                            parts.append(get_file_context(file_context_str))
+                            parts.append(get_user_prompt(user_request_data["request"]))
+                            parts.append(f"--- SYSTEM INSTRUCTIONS ---\n{user_request_data['system']}")
+                        else:
+                            parts.append(file_context_str)
+                            
+                        if batch_num == batch_count and user_request_data:
+                            parts.append(get_user_prompt(user_request_data["request"], reminder=True))
+                            parts.append(get_system_prompt_important(agent_type))
+                            
+                        full_text = "\n\n".join(parts)
+
                     if args.file:
                         try:
                             fd, temp_path = tempfile.mkstemp(prefix="combineCopy_prompt_", suffix=".txt", text=True)
