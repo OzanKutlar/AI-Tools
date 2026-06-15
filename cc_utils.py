@@ -190,7 +190,7 @@ def intelligent_json_fix(content: str) -> tuple[dict | None, str]:
                 
     current = '\n'.join(lines)
 
-    for _ in range(200):
+    for _ in range(10000):
         try:
             data = json.loads(current)
             return data, current
