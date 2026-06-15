@@ -316,27 +316,27 @@ def main():
     
         display_summary(root_dir, max_depth, ext_filters, batch_count, total_files)
     
-    agent_type = "orchestrator" if args.orchestrate else "cli" if args.cli else "default"
+        agent_type = "orchestrator" if args.orchestrate else "cli" if args.cli else "default"
 
-    user_request_data = None
-    if args.system is not None or args.cli:
-        console.print("[bold cyan]Phase: Instruction & System Prompt[/bold cyan]")
-        sys_arg = args.system if args.system else 'DEFAULT'
-        if sys_arg == 'DEFAULT' or sys_arg == '':
-            sys_prompt_text = get_system_prompt(agent_type=agent_type, file_cull=args.file_culling)
-        else:
-            try:
-                with open(sys_arg, 'r', encoding='utf-8') as f:
-                    sys_prompt_text = f.read().strip()
-            except Exception as e:
-                console.print(f"[red]Error reading system prompt file: {e}[/red]")
+        user_request_data = None
+        if args.system is not None or args.cli:
+            console.print("[bold cyan]Phase: Instruction & System Prompt[/bold cyan]")
+            sys_arg = args.system if args.system else 'DEFAULT'
+            if sys_arg == 'DEFAULT' or sys_arg == '':
+                sys_prompt_text = get_system_prompt(agent_type=agent_type, file_cull=args.file_culling)
+            else:
+                try:
+                    with open(sys_arg, 'r', encoding='utf-8') as f:
+                        sys_prompt_text = f.read().strip()
+                except Exception as e:
+                    console.print(f"[red]Error reading system prompt file: {e}[/red]")
+                    return
+                    
+            app = SystemPromptApp(root_dir, found_files, sys_prompt_text)
+            user_request_data = app.run()
+            if not user_request_data:
+                console.print(Panel("System prompt setup cancelled.", title="Cancelled", style="bold yellow"))
                 return
-                
-        app = SystemPromptApp(root_dir, found_files, sys_prompt_text)
-        user_request_data = app.run()
-        if not user_request_data:
-            console.print(Panel("System prompt setup cancelled.", title="Cancelled", style="bold yellow"))
-            return
 
         files_per_batch = math.ceil(total_files / batch_count)
         console.print(f"\n[dim]Splitting into {batch_count} batch(es). ~{files_per_batch} files/batch.[/dim]\n")
