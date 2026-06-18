@@ -6,6 +6,7 @@ import subprocess
 import threading
 import json
 import hashlib
+import io
 from ftplib import FTP, error_perm
 
 from textual.app import App, ComposeResult
@@ -93,10 +94,10 @@ def get_changed_files(commit_hash: str) -> list[dict]:
                 filepath = parts[-1]
                 
                 if status == 'D':
-                    files.append({"path": filepath, "action": "delete"})
+                    files.append({"path": filepath, "action": "delete", "git_status": "D", "base_commit": commit_hash})
                 elif status in ('A', 'M'):
                     if os.path.exists(filepath):
-                        files.append({"path": filepath, "action": "upload"})
+                        files.append({"path": filepath, "action": "upload", "git_status": status, "base_commit": commit_hash})
         return files
     except subprocess.CalledProcessError as e:
         print(f"Git error resolving commit {commit_hash}: {e.output}")
@@ -450,6 +451,7 @@ class FtpApp(App):
                 dir_path = os.path.dirname(fpath)
                 filename = os.path.basename(fpath)
                 
+                dir_ok = True
                 if dir_path:
                     parts = dir_path.replace('\\', '/').split('/')
                     for p in parts:
@@ -464,7 +466,51 @@ class FtpApp(App):
                                 ftp.cwd(p)
                             else:
                                 self.call_from_thread(self._log_msg, f"Directory path '{p}' doesn't exist on server. Skipping deletion.")
+                                dir_ok = False
                                 break
+
+                if not dir_ok:
+                    self.call_from_thread(self._finish_file, i, "error")
+                    ftp.cwd(base_pwd)
+                    self.call_from_thread(self._advance_global_progress)
+                    continue
+
+                proceed = True
+                git_status = file_info.get("git_status")
+                base_commit = file_info.get("base_commit")
+                
+                if git_status in ('M', 'D'):
+                    self.call_from_thread(self._log_msg, f"Verifying remote state for {filename}...")
+                    remote_buffer = io.BytesIO()
+                    try:
+                        ftp.retrbinary(f'RETR {filename}', remote_buffer.write)
+                        remote_content = remote_buffer.getvalue()
+                    except error_perm as e:
+                        self.call_from_thread(self._log_msg, f"Verification failed: Remote file not found ({e})")
+                        proceed = False
+                        
+                    if proceed:
+                        try:
+                            git_path = fpath.replace('\\', '/')
+                            base_content = subprocess.check_output(
+                                ['git', 'show', f'{base_commit}:{git_path}'],
+                                stderr=subprocess.STDOUT
+                            )
+                            remote_norm = remote_content.replace(b'\r\n', b'\n')
+                            base_norm = base_content.replace(b'\r\n', b'\n')
+                            
+                            if remote_norm != base_norm:
+                                self.call_from_thread(self._log_msg, f"Verification failed: Remote file does not match base commit {base_commit}")
+                                proceed = False
+                        except subprocess.CalledProcessError as e:
+                            self.call_from_thread(self._log_msg, f"Verification failed: Could not read {git_path} at {base_commit}")
+                            proceed = False
+
+                if not proceed:
+                    self.call_from_thread(self._finish_file, i, "error")
+                    ftp.cwd(base_pwd)
+                    self.call_from_thread(self._advance_global_progress)
+                    continue
 
                 if action == "upload":
                     local_size = os.path.getsize(fpath)
