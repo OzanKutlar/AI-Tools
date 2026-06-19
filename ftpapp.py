@@ -173,8 +173,8 @@ def load_saved_config() -> dict:
     return {}
 
 
-def save_config(ftp: str, username: str, repo_loc: str) -> None:
-    """Saves folder configuration (excluding password and commit hash)."""
+def save_config(ftp: str, username: str, repo_loc: str, last_commit: str = "") -> None:
+    """Saves folder configuration (excluding password but saving last commit hash)."""
     try:
         path = get_config_filepath()
         data = {
@@ -182,6 +182,13 @@ def save_config(ftp: str, username: str, repo_loc: str) -> None:
             "username": username,
             "repo_loc": repo_loc
         }
+        if last_commit:
+            data["last_commit"] = last_commit
+        else:
+            existing = load_saved_config()
+            if "last_commit" in existing:
+                data["last_commit"] = existing["last_commit"]
+                
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=4)
     except Exception:
@@ -254,7 +261,7 @@ class SetupApp(App):
     Input:focus { border: tall #d08c60; }
     OptionList { height: 6; background: #1e1a18; border: tall #5a4d45; margin-top: 1; }
     OptionList:focus { border: tall #d08c60; }
-    Button { margin-top: 2; width: 100%; }
+    #btn-start { margin-top: 2; width: 100%; }
     .title { text-align: center; text-style: bold; color: #d08c60; margin-bottom: 1; }
     #lbl-commit-details {
         background: #241f1c;
@@ -263,6 +270,23 @@ class SetupApp(App):
         margin-top: 1; 
         margin-bottom: 1;
         height: 3;
+    }
+    .commit-row {
+        height: auto;
+        align: y-mid;
+        margin-top: 1;
+    }
+    .commit-row OptionList {
+        width: 70%;
+        margin-top: 0;
+    }
+    .commit-row Input {
+        width: 70%;
+    }
+    #btn-load-last {
+        width: 30%;
+        height: 3;
+        margin-left: 1;
     }
     """
 
@@ -288,13 +312,17 @@ class SetupApp(App):
             if self.commits:
                 yield Label("Commit Hash Selection (Use Arrow Keys / Enter)")
                 yield Label("", id="lbl-commit-details")
-                yield OptionList(
-                    *[f"{c['hash']} - {c['subject']}" for c in self.commits],
-                    id="inp-commit-list"
-                )
+                with Horizontal(classes="commit-row"):
+                    yield OptionList(
+                        *[f"{c['hash']} - {c['subject']}" for c in self.commits],
+                        id="inp-commit-list"
+                    )
+                    yield Button("Load Last", id="btn-load-last")
             else:
                 yield Label("Commit Hash (e.g. HEAD~1, a1b2c3d)")
-                yield Input(value=self.initial_args.get("commit", ""), id="inp-commit")
+                with Horizontal(classes="commit-row"):
+                    yield Input(value=self.initial_args.get("commit", ""), id="inp-commit")
+                    yield Button("Load Last", id="btn-load-last")
             
             yield Label("Repo Location (e.g. /httpdocs/)")
             yield Input(value=self.initial_args.get("repo_loc", ""), id="inp-repo")
@@ -315,7 +343,28 @@ class SetupApp(App):
         self.update_commit_display(event.option_index)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "btn-start":
+        if event.button.id == "btn-load-last":
+            last_val = self.initial_args.get("last_commit", "").strip()
+            if not last_val:
+                self.notify("No previously saved commit found.", severity="warning")
+                return
+
+            if self.commits:
+                idx = None
+                for i, c in enumerate(self.commits):
+                    if c["hash"].startswith(last_val) or last_val.startswith(c["hash"]):
+                        idx = i
+                        break
+                if idx is not None:
+                    self.query_one("#inp-commit-list", OptionList).highlighted = idx
+                    self.notify(f"Selected last commit: {self.commits[idx]['hash']}")
+                else:
+                    self.notify(f"Last commit {last_val} not in recent 50 commits.", severity="warning")
+            else:
+                self.query_one("#inp-commit", Input).value = last_val
+                self.notify(f"Loaded last commit: {last_val}")
+
+        elif event.button.id == "btn-start":
             if self.commits:
                 list_widget = self.query_one("#inp-commit-list", OptionList)
                 idx = list_widget.highlighted
@@ -634,7 +683,7 @@ def main():
 
     # Load and merge saved configuration
     saved_config = load_saved_config()
-    for key in ["ftp", "username", "repo_loc"]:
+    for key in ["ftp", "username", "repo_loc", "last_commit"]:
         if not initial_args.get(key) and key in saved_config:
             initial_args[key] = saved_config[key]
     
@@ -687,7 +736,7 @@ def main():
             sys.exit(0)
 
     # Save finalized configuration for next run
-    save_config(final_args["ftp"], final_args["username"], final_args["repo_loc"])
+    save_config(final_args["ftp"], final_args["username"], final_args["repo_loc"], final_args["commit"])
 
     # Launch Main App
     app = FtpApp(final_args, files)
