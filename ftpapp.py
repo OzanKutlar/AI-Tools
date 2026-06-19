@@ -323,13 +323,14 @@ class SetupApp(App):
             else:
                 commit_val = self.query_one("#inp-commit", Input).value.strip()
 
-            self.result = {
+            self.result = self.initial_args.copy()
+            self.result.update({
                 "ftp": self.query_one("#inp-ftp", Input).value.strip(),
                 "username": self.query_one("#inp-user", Input).value.strip(),
                 "password": self.query_one("#inp-pass", Input).value,
                 "commit": commit_val,
                 "repo_loc": self.query_one("#inp-repo", Input).value.strip()
-            }
+            })
             # Basic validation
             if not all([self.result["ftp"], self.result["username"], self.result["commit"], self.result["repo_loc"]]):
                 self.notify("Please fill in all required fields.", severity="error")
@@ -487,31 +488,34 @@ class FtpApp(App):
                 base_commit = file_info.get("base_commit")
                 
                 if git_status in ('M', 'D'):
-                    self.call_from_thread(self._log_msg, f"Verifying remote state for {filename}...")
-                    remote_buffer = io.BytesIO()
-                    try:
-                        ftp.retrbinary(f'RETR {filename}', remote_buffer.write)
-                        remote_content = remote_buffer.getvalue()
-                    except error_perm as e:
-                        self.call_from_thread(self._log_msg, f"Verification failed: Remote file not found ({e})")
-                        proceed = False
-                        
-                    if proceed:
+                    if self.config.get("force"):
+                        self.call_from_thread(self._log_msg, f"Skipping remote verification for {filename} (--force enabled).")
+                    else:
+                        self.call_from_thread(self._log_msg, f"Verifying remote state for {filename}...")
+                        remote_buffer = io.BytesIO()
                         try:
-                            git_path = fpath.replace('\\', '/')
-                            base_content = subprocess.check_output(
-                                ['git', 'show', f'{base_commit}:{git_path}'],
-                                stderr=subprocess.STDOUT
-                            )
-                            remote_norm = remote_content.replace(b'\r\n', b'\n')
-                            base_norm = base_content.replace(b'\r\n', b'\n')
-                            
-                            if remote_norm != base_norm:
-                                self.call_from_thread(self._log_msg, f"Verification failed: Remote file does not match base commit {base_commit}")
-                                proceed = False
-                        except subprocess.CalledProcessError as e:
-                            self.call_from_thread(self._log_msg, f"Verification failed: Could not read {git_path} at {base_commit}")
+                            ftp.retrbinary(f'RETR {filename}', remote_buffer.write)
+                            remote_content = remote_buffer.getvalue()
+                        except error_perm as e:
+                            self.call_from_thread(self._log_msg, f"Verification failed: Remote file not found ({e})")
                             proceed = False
+                            
+                        if proceed:
+                            try:
+                                git_path = fpath.replace('\\', '/')
+                                base_content = subprocess.check_output(
+                                    ['git', 'show', f'{base_commit}:{git_path}'],
+                                    stderr=subprocess.STDOUT
+                                )
+                                remote_norm = remote_content.replace(b'\r\n', b'\n')
+                                base_norm = base_content.replace(b'\r\n', b'\n')
+                                
+                                if remote_norm != base_norm:
+                                    self.call_from_thread(self._log_msg, f"Verification failed: Remote file does not match base commit {base_commit}")
+                                    proceed = False
+                            except subprocess.CalledProcessError as e:
+                                self.call_from_thread(self._log_msg, f"Verification failed: Could not read {git_path} at {base_commit}")
+                                proceed = False
 
                 if not proceed:
                     self.call_from_thread(self._finish_file, i, "error")
@@ -623,6 +627,7 @@ def main():
     parser.add_argument("-c", "--commit", help="Git commit hash to diff against HEAD")
     parser.add_argument("-r", "--repo-loc", help="Repository location on FTP server")
     parser.add_argument("-s", "--select", action="store_true", help="Open TUI to select which files to update")
+    parser.add_argument("--force", action="store_true", help="Force changes by skipping remote state verification")
     args = parser.parse_args()
 
     initial_args = vars(args)
