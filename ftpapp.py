@@ -735,8 +735,12 @@ def main():
             print("No files selected. Exiting.")
             sys.exit(0)
 
-    # Save finalized configuration for next run
-    save_config(final_args["ftp"], final_args["username"], final_args["repo_loc"], final_args["commit"])
+    # Save finalized configuration for next run (saving the current HEAD commit as the state we are setting the website to)
+    try:
+        current_head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+    except Exception:
+        current_head = ""
+    save_config(final_args["ftp"], final_args["username"], final_args["repo_loc"], current_head)
 
     # Launch Main App
     app = FtpApp(final_args, files)
