@@ -79,6 +79,11 @@ except ImportError:
 def get_changed_files(commit_hash: str) -> list[dict]:
     """Extracts Added, Modified, and Deleted files using git diff against HEAD."""
     try:
+        try:
+            repo_root = subprocess.check_output(['git', 'rev-parse', '--show-toplevel'], text=True).strip()
+        except Exception:
+            repo_root = os.getcwd()
+            
         # --no-renames breaks renames down into a Deleted event and an Added event
         out = subprocess.check_output(
             ['git', 'diff', '--no-renames', '--name-status', '--diff-filter=AMD', commit_hash, 'HEAD'],
@@ -92,12 +97,13 @@ def get_changed_files(commit_hash: str) -> list[dict]:
             if len(parts) >= 2:
                 status = parts[0]
                 filepath = parts[-1]
+                abs_path = os.path.abspath(os.path.join(repo_root, filepath))
                 
                 if status == 'D':
-                    files.append({"path": filepath, "action": "delete", "git_status": "D", "base_commit": commit_hash})
+                    files.append({"path": filepath, "abs_path": abs_path, "action": "delete", "git_status": "D", "base_commit": commit_hash})
                 elif status in ('A', 'M'):
-                    if os.path.exists(filepath):
-                        files.append({"path": filepath, "action": "upload", "git_status": status, "base_commit": commit_hash})
+                    if os.path.exists(abs_path):
+                        files.append({"path": filepath, "abs_path": abs_path, "action": "upload", "git_status": status, "base_commit": commit_hash})
         return files
     except subprocess.CalledProcessError as e:
         print(f"Git error resolving commit {commit_hash}: {e.output}")
@@ -382,7 +388,7 @@ class FtpApp(App):
         self.config = config
         self.files = files
         self.total_bytes_transferred = 0
-        self.total_size = sum(os.path.getsize(f["path"]) for f in files if f["action"] == "upload" and os.path.exists(f["path"]))
+        self.total_size = sum(os.path.getsize(f.get("abs_path", f["path"])) for f in files if f["action"] == "upload" and os.path.exists(f.get("abs_path", f["path"])))
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="layout"):
@@ -444,6 +450,7 @@ class FtpApp(App):
 
             for i, file_info in enumerate(self.files):
                 fpath = file_info["path"]
+                abs_path = file_info.get("abs_path", fpath)
                 action = file_info["action"]
                 
                 self.call_from_thread(self._start_file, i, fpath, action)
@@ -513,7 +520,7 @@ class FtpApp(App):
                     continue
 
                 if action == "upload":
-                    local_size = os.path.getsize(fpath)
+                    local_size = os.path.getsize(abs_path)
                     self.call_from_thread(self._log_msg, f"> STOR {filename} ({format_bytes(local_size)})")
                     
                     start_time = time.time()
@@ -534,7 +541,7 @@ class FtpApp(App):
                             last_ui_update = now
 
                     try:
-                        with open(fpath, 'rb') as f:
+                        with open(abs_path, 'rb') as f:
                             ftp.storbinary(f'STOR {filename}', f, blocksize=8192, callback=upload_callback)
                         
                         dt = time.time() - start_time
@@ -615,6 +622,7 @@ def main():
     parser.add_argument("-p", "--password", help="FTP password")
     parser.add_argument("-c", "--commit", help="Git commit hash to diff against HEAD")
     parser.add_argument("-r", "--repo-loc", help="Repository location on FTP server")
+    parser.add_argument("-s", "--select", action="store_true", help="Open TUI to select which files to update")
     args = parser.parse_args()
 
     initial_args = vars(args)
@@ -651,6 +659,27 @@ def main():
     if not files:
         print("No file changes detected (nothing to upload or delete).")
         sys.exit(0)
+
+    if args.select:
+        try:
+            repo_root = subprocess.check_output(['git', 'rev-parse', '--show-toplevel'], text=True).strip()
+        except Exception:
+            repo_root = os.getcwd()
+
+        file_paths = [f["abs_path"] for f in files]
+        from tui_selection import run_file_selector
+        selected = run_file_selector(repo_root, file_paths, ast_mode=False)
+        
+        if selected is None:
+            print("Selection cancelled. Exiting.")
+            sys.exit(0)
+            
+        selected_files, _, _ = selected
+        files = [f for f in files if f["abs_path"] in selected_files]
+        
+        if not files:
+            print("No files selected. Exiting.")
+            sys.exit(0)
 
     # Save finalized configuration for next run
     save_config(final_args["ftp"], final_args["username"], final_args["repo_loc"])
