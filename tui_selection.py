@@ -4,6 +4,7 @@ import json
 import tempfile
 import asyncio
 import subprocess
+import hashlib
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.widgets import Tree, Header, Footer, Label, Input
@@ -15,6 +16,7 @@ class SelectionTree(Tree):
         Binding("enter", "toggle_select", "Toggle Selection"),
         Binding("space", "toggle_select", "Toggle Selection"),
         Binding("i", "toggle_important", "Toggle Important"),
+        Binding("x", "toggle_ignore", "Toggle Ignore"),
         Binding("h", "collapse_node", "Collapse", show=False),
         Binding("l", "expand_node", "Expand", show=False),
         Binding("left", "collapse_node", "Collapse", show=False),
@@ -50,7 +52,39 @@ class SelectionTree(Tree):
         if getattr(self.app, "ast_mode", False):
             self.app.action_toggle_important()
 
+    def action_toggle_ignore(self) -> None:
+        if hasattr(self.app, "action_toggle_ignore"):
+            self.app.action_toggle_ignore()
+
 from cc_utils import extract_blocks, safe_read_file
+
+def get_ignore_filepath(root_dir: str) -> str:
+    dir_path = os.path.expanduser("~/.configs/combineCopy")
+    try:
+        os.makedirs(dir_path, exist_ok=True)
+    except Exception:
+        pass
+    cwd_hash = hashlib.md5(os.path.abspath(root_dir).encode('utf-8')).hexdigest()
+    return os.path.join(dir_path, f"ignore_{cwd_hash}.json")
+
+def load_ignored_paths(root_dir: str) -> set:
+    try:
+        path = get_ignore_filepath(root_dir)
+        if os.path.exists(path):
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return set(data.get("ignored", []))
+    except Exception:
+        pass
+    return set()
+
+def save_ignored_paths(root_dir: str, ignored: set) -> None:
+    try:
+        path = get_ignore_filepath(root_dir)
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump({"ignored": list(ignored)}, f, indent=4)
+    except Exception:
+        pass
 
 class FileSelector(App):
     """Full-screen TUI for selecting which files to include."""
@@ -105,6 +139,7 @@ class FileSelector(App):
         Binding("n", "select_none", "Deselect All"),
         Binding("s", "focus_search", "Search"),
         Binding("i", "toggle_important", "Toggle Important"),
+        Binding("x", "toggle_ignore", "Toggle Ignore"),
         Binding("q", "confirm", "Confirm"),
         Binding("escape", "cancel", "Cancel"),
     ]
@@ -116,6 +151,7 @@ class FileSelector(App):
         self.all_files = files
         self.search_term = ""
         self.ast_mode = ast_mode
+        self.ignored_paths = load_ignored_paths(root_dir)
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -144,7 +180,7 @@ class FileSelector(App):
         self.query_one("#file-tree").focus()
 
     @staticmethod
-    def _make_label(name: str, state: str, node_type: str, important: bool = False, ast_mode: bool = False) -> Text:
+    def _make_label(name: str, state: str, node_type: str, important: bool = False, ast_mode: bool = False, is_ignored: bool = False) -> Text:
         if node_type == "folder":
             icon = "📂 "
         elif node_type == "block":
@@ -163,6 +199,8 @@ class FileSelector(App):
             label.append("☐ ", style="bold red")
             
         label.append(icon + name, style="bold" if node_type == "folder" else "")
+        if is_ignored:
+            label.append(" [IGNORED]", style="dim strike")
         return label
 
     def _save_states(self) -> dict:
@@ -210,8 +248,18 @@ class FileSelector(App):
             for i, part in enumerate(parts):
                 # If searching, we want new files to be 'unchecked' by default so they aren't auto-selected
                 is_searching = bool(self.search_term)
-                default_file_state = "unchecked" if is_searching else "checked"
-                default_folder_state = "checked" # Folders stay checked to keep hierarchy visible
+            for i, part in enumerate(parts):
+                path_so_far = f"{path_so_far}/{part}" if path_so_far else part
+                is_searching = bool(self.search_term)
+                
+                is_ignored = False
+                temp_parts = path_so_far.split("/")
+                for j in range(1, len(temp_parts) + 1):
+                    if "/".join(temp_parts[:j]) in self.ignored_paths:
+                        is_ignored = True
+                        break
+                        
+                default_state = "unchecked" if (is_searching or is_ignored) else "checked"
 
                 if i == len(parts) - 1:
                     # Restore saved state if available
@@ -220,21 +268,21 @@ class FileSelector(App):
                         file_state = file_saved["state"]
                         file_important = file_saved.get("important", False)
                     else:
-                        file_state = default_file_state
+                        file_state = default_state
                         file_important = False
 
-                    file_data = {"type": "file", "state": file_state, "important": file_important, "name": part, "path": file_path, "blocks_loaded": False}
+                    file_data = {"type": "file", "state": file_state, "important": file_important, "name": part, "path": file_path, "rel_path": path_so_far, "blocks_loaded": False, "is_ignored": is_ignored}
                     
                     try:
                         file_node = current_node.add(
-                            self._make_label(part, file_state, "file", file_important, self.ast_mode),
+                            self._make_label(part, file_state, "file", file_important, self.ast_mode, is_ignored),
                             data=file_data,
                             allow_expand=self.ast_mode
                         )
                     except TypeError:
                         # Fallback for older Textual versions without `allow_expand`
                         file_node = current_node.add(
-                            self._make_label(part, file_state, "file", file_important, self.ast_mode),
+                            self._make_label(part, file_state, "file", file_important, self.ast_mode, is_ignored),
                             data=file_data
                         )
                         # If allow_expand isn't supported, we MUST eagerly load if ast_mode is True
@@ -248,8 +296,8 @@ class FileSelector(App):
                                     block_saved = saved_states.get(block_key)
                                     block_state = block_saved["state"] if block_saved else file_state
                                     file_node.add_leaf(
-                                        self._make_label(b["name"], block_state, "block", False, self.ast_mode),
-                                        data={"type": "block", "state": block_state, "file_path": file_path, "block_idx": idx, "name": b["name"], "start": b["start"], "end": b["end"]}
+                                        self._make_label(b["name"], block_state, "block", False, self.ast_mode, is_ignored),
+                                        data={"type": "block", "state": block_state, "file_path": file_path, "block_idx": idx, "name": b["name"], "start": b["start"], "end": b["end"], "is_ignored": is_ignored}
                                     )
 
                     # Eagerly load blocks if we have saved partial states to restore (e.g., during active search rebuilds)
@@ -264,19 +312,24 @@ class FileSelector(App):
                                     block_saved = saved_states.get(block_key)
                                     block_state = block_saved["state"] if block_saved else file_state
                                     file_node.add_leaf(
-                                        self._make_label(b["name"], block_state, "block", False, self.ast_mode),
-                                        data={"type": "block", "state": block_state, "file_path": file_path, "block_idx": idx, "name": b["name"], "start": b["start"], "end": b["end"]}
+                                        self._make_label(b["name"], block_state, "block", False, self.ast_mode, is_ignored),
+                                        data={"type": "block", "state": block_state, "file_path": file_path, "block_idx": idx, "name": b["name"], "start": b["start"], "end": b["end"], "is_ignored": is_ignored}
                                     )
                             file_node.data["blocks_loaded"] = True
                             file_node.expand()
                 else:
-                    path_so_far = f"{path_so_far}/{part}" if path_so_far else part
                     if path_so_far in nodes_cache:
                         current_node = nodes_cache[path_so_far]
                     else:
+                        folder_saved = saved_states.get(path_so_far)
+                        if folder_saved:
+                            folder_state = folder_saved["state"]
+                        else:
+                            folder_state = default_state
+                            
                         new_node = current_node.add(
-                            self._make_label(part, default_folder_state, "folder", False, self.ast_mode),
-                            data={"type": "folder", "state": default_folder_state, "important": False, "name": part},
+                            self._make_label(part, folder_state, "folder", False, self.ast_mode, is_ignored),
+                            data={"type": "folder", "state": folder_state, "important": False, "name": part, "rel_path": path_so_far, "is_ignored": is_ignored},
                         )
                         nodes_cache[path_so_far] = new_node
                         current_node = new_node
@@ -309,14 +362,14 @@ class FileSelector(App):
 
         if node.data:
             node.data["state"] = final_state
-            node.set_label(self._make_label(node.data["name"], final_state, node.data["type"], node.data.get("important", False), self.ast_mode))
+            node.set_label(self._make_label(node.data["name"], final_state, node.data["type"], node.data.get("important", False), self.ast_mode, node.data.get("is_ignored", False)))
         return final_state
 
     def _set_state(self, node, state: str) -> None:
         if node.data is None:
             return
         node.data["state"] = state
-        node.set_label(self._make_label(node.data["name"], state, node.data["type"], node.data.get("important", False), self.ast_mode))
+        node.set_label(self._make_label(node.data["name"], state, node.data["type"], node.data.get("important", False), self.ast_mode, node.data.get("is_ignored", False)))
         for child in node.children:
             self._set_state(child, state)
 
@@ -324,7 +377,7 @@ class FileSelector(App):
         if node.data is None:
             return
         node.data["important"] = important
-        node.set_label(self._make_label(node.data["name"], node.data.get("state", "unchecked"), node.data["type"], important, self.ast_mode))
+        node.set_label(self._make_label(node.data["name"], node.data.get("state", "unchecked"), node.data["type"], important, self.ast_mode, node.data.get("is_ignored", False)))
         for child in node.children:
             self._set_important(child, important)
 
@@ -365,7 +418,7 @@ class FileSelector(App):
                 
             if parent.data.get("state") != final_state:
                 parent.data["state"] = final_state
-                parent.set_label(self._make_label(parent.data["name"], final_state, parent.data["type"], parent.data.get("important", False), self.ast_mode))
+                parent.set_label(self._make_label(parent.data["name"], final_state, parent.data["type"], parent.data.get("important", False), self.ast_mode, parent.data.get("is_ignored", False)))
                 parent = parent.parent
             else:
                 break
@@ -375,13 +428,14 @@ class FileSelector(App):
         if self.ast_mode and node.data and node.data.get("type") == "file" and not node.data.get("blocks_loaded", False):
             file_path = node.data["path"]
             file_state = node.data.get("state", "unchecked")
+            is_ignored = node.data.get("is_ignored", False)
             content = safe_read_file(file_path)
             if content and not content.startswith("(This is a binary"):
                 blocks = extract_blocks(file_path, content)
                 for idx, b in enumerate(blocks):
                     node.add_leaf(
-                        self._make_label(b["name"], file_state, "block", False, self.ast_mode),
-                        data={"type": "block", "state": file_state, "file_path": file_path, "block_idx": idx, "name": b["name"], "start": b["start"], "end": b["end"]}
+                        self._make_label(b["name"], file_state, "block", False, self.ast_mode, is_ignored),
+                        data={"type": "block", "state": file_state, "file_path": file_path, "block_idx": idx, "name": b["name"], "start": b["start"], "end": b["end"], "is_ignored": is_ignored}
                     )
             node.data["blocks_loaded"] = True
 
@@ -415,6 +469,50 @@ class FileSelector(App):
             return
         new_state = "unchecked" if node.data.get("state") == "checked" else "checked"
         self._set_state(node, new_state)
+        self._update_parent_states(node)
+        self._update_subtitle()
+
+    def action_toggle_ignore(self) -> None:
+        tree = self.query_one("#file-tree", SelectionTree)
+        node = tree.cursor_node
+        if not node or not node.data:
+            return
+            
+        if node.data.get("type") == "block":
+            return
+            
+        rel_path = node.data.get("rel_path")
+        if not rel_path:
+            return
+            
+        is_now_ignored = rel_path not in self.ignored_paths
+        if is_now_ignored:
+            self.ignored_paths.add(rel_path)
+            self._set_state(node, "unchecked")
+        else:
+            self.ignored_paths.remove(rel_path)
+            self._set_state(node, "checked")
+            
+        save_ignored_paths(self.root_dir, self.ignored_paths)
+        
+        def update_ignored(n):
+            if n.data:
+                p = n.data.get("rel_path", "")
+                if n.data.get("type") == "block":
+                    n.data["is_ignored"] = n.parent.data.get("is_ignored", False)
+                elif p:
+                    n_ignored = False
+                    temp_parts = p.split("/")
+                    for j in range(1, len(temp_parts) + 1):
+                        if "/".join(temp_parts[:j]) in self.ignored_paths:
+                            n_ignored = True
+                            break
+                    n.data["is_ignored"] = n_ignored
+                n.set_label(self._make_label(n.data["name"], n.data["state"], n.data["type"], n.data.get("important", False), self.ast_mode, n.data.get("is_ignored", False)))
+            for child in n.children:
+                update_ignored(child)
+
+        update_ignored(node)
         self._update_parent_states(node)
         self._update_subtitle()
 
