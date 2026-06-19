@@ -273,7 +273,7 @@ class SetupApp(App):
     }
     .commit-row {
         height: auto;
-        align: y-mid;
+        align: left middle;
         margin-top: 1;
     }
     .commit-row OptionList {
