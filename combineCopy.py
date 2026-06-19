@@ -392,7 +392,7 @@ def main():
                             full_text = build_prompt(
                                 user_request=user_request_data["request"],
                                 file_context=file_context_str,
-                                ast_map=generate_tree_string(found_files, root_dir),
+                                ast_map=generate_tree_string(found_files, root_dir) if args.file_culling else "",
                                 file_cull=args.file_culling,
                                 system_prompt=user_request_data["system"],
                                 agent_type=agent_type

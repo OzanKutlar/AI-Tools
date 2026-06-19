@@ -223,22 +223,52 @@ class FileSelector(App):
                         file_state = default_file_state
                         file_important = False
 
-                    file_node = current_node.add(
-                        self._make_label(part, file_state, "file", file_important, self.ast_mode),
-                        data={"type": "file", "state": file_state, "important": file_important, "name": part, "path": file_path}
-                    )
+                    file_data = {"type": "file", "state": file_state, "important": file_important, "name": part, "path": file_path, "blocks_loaded": False}
                     
-                    content = safe_read_file(file_path)
-                    if content and not content.startswith("(This is a binary"):
-                        blocks = extract_blocks(file_path, content)
-                        for idx, b in enumerate(blocks):
-                            block_key = f"{file_path}::{b['name']}"
-                            block_saved = saved_states.get(block_key)
-                            block_state = block_saved["state"] if block_saved else file_state
-                            file_node.add_leaf(
-                                self._make_label(b["name"], block_state, "block", False, self.ast_mode),
-                                data={"type": "block", "state": block_state, "file_path": file_path, "block_idx": idx, "name": b["name"], "start": b["start"], "end": b["end"]}
-                            )
+                    try:
+                        file_node = current_node.add(
+                            self._make_label(part, file_state, "file", file_important, self.ast_mode),
+                            data=file_data,
+                            allow_expand=self.ast_mode
+                        )
+                    except TypeError:
+                        # Fallback for older Textual versions without `allow_expand`
+                        file_node = current_node.add(
+                            self._make_label(part, file_state, "file", file_important, self.ast_mode),
+                            data=file_data
+                        )
+                        # If allow_expand isn't supported, we MUST eagerly load if ast_mode is True
+                        if self.ast_mode:
+                            file_node.data["blocks_loaded"] = True
+                            content = safe_read_file(file_path)
+                            if content and not content.startswith("(This is a binary"):
+                                blocks = extract_blocks(file_path, content)
+                                for idx, b in enumerate(blocks):
+                                    block_key = f"{file_path}::{b['name']}"
+                                    block_saved = saved_states.get(block_key)
+                                    block_state = block_saved["state"] if block_saved else file_state
+                                    file_node.add_leaf(
+                                        self._make_label(b["name"], block_state, "block", False, self.ast_mode),
+                                        data={"type": "block", "state": block_state, "file_path": file_path, "block_idx": idx, "name": b["name"], "start": b["start"], "end": b["end"]}
+                                    )
+
+                    # Eagerly load blocks if we have saved partial states to restore (e.g., during active search rebuilds)
+                    if self.ast_mode and not file_node.data.get("blocks_loaded"):
+                        has_saved_blocks = any(k.startswith(f"{file_path}::") for k in saved_states)
+                        if has_saved_blocks:
+                            content = safe_read_file(file_path)
+                            if content and not content.startswith("(This is a binary"):
+                                blocks = extract_blocks(file_path, content)
+                                for idx, b in enumerate(blocks):
+                                    block_key = f"{file_path}::{b['name']}"
+                                    block_saved = saved_states.get(block_key)
+                                    block_state = block_saved["state"] if block_saved else file_state
+                                    file_node.add_leaf(
+                                        self._make_label(b["name"], block_state, "block", False, self.ast_mode),
+                                        data={"type": "block", "state": block_state, "file_path": file_path, "block_idx": idx, "name": b["name"], "start": b["start"], "end": b["end"]}
+                                    )
+                            file_node.data["blocks_loaded"] = True
+                            file_node.expand()
                 else:
                     path_so_far = f"{path_so_far}/{part}" if path_so_far else part
                     if path_so_far in nodes_cache:
@@ -339,6 +369,21 @@ class FileSelector(App):
                 parent = parent.parent
             else:
                 break
+
+    def on_tree_node_expanded(self, event: Tree.NodeExpanded) -> None:
+        node = event.node
+        if self.ast_mode and node.data and node.data.get("type") == "file" and not node.data.get("blocks_loaded", False):
+            file_path = node.data["path"]
+            file_state = node.data.get("state", "unchecked")
+            content = safe_read_file(file_path)
+            if content and not content.startswith("(This is a binary"):
+                blocks = extract_blocks(file_path, content)
+                for idx, b in enumerate(blocks):
+                    node.add_leaf(
+                        self._make_label(b["name"], file_state, "block", False, self.ast_mode),
+                        data={"type": "block", "state": file_state, "file_path": file_path, "block_idx": idx, "name": b["name"], "start": b["start"], "end": b["end"]}
+                    )
+            node.data["blocks_loaded"] = True
 
     def on_tree_node_highlighted(self, event: Tree.NodeHighlighted) -> None:
         node = event.node
