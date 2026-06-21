@@ -8,6 +8,8 @@ import tempfile
 import zipfile
 import atexit
 import shutil
+import random
+import re
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 from rich.rule import Rule
@@ -43,6 +45,33 @@ from tui_prompt import SystemPromptApp
 from tui_confirm import ConfirmCopyApp
 from tui_apply import AutoAgentApp, OrchestratorAgentApp
 
+def resolve_random_paths(paths: list[str]) -> list[str]:
+    resolved = []
+    pattern = re.compile(r'\$\{r\((\d+),\s*(\d+)\)\}')
+    for p in paths:
+        match = pattern.search(p)
+        if match:
+            start, end = int(match.group(1)), int(match.group(2))
+            if start > end:
+                start, end = end, start
+            
+            candidates = []
+            for i in range(start, end + 1):
+                test_path = p.replace(match.group(0), str(i), 1)
+                if os.path.exists(test_path):
+                    candidates.append(test_path)
+            
+            if not candidates:
+                console.print(Panel(f"No existing files found for range pattern in:\n{p}", title="Error", style="bold red"))
+                sys.exit(1)
+            
+            selected = random.choice(candidates)
+            console.print(f"[bold cyan]Randomly selected:[/bold cyan] {selected} [dim](from {len(candidates)} candidates)[/dim]")
+            resolved.append(selected)
+        else:
+            resolved.append(p)
+    return resolved
+
 def main():
     parser = argparse.ArgumentParser(description="Scan folder and combine file contents to clipboard.")
     parser.add_argument("-l", "--limit", type=int, default=100, help="Max recursion depth")
@@ -63,6 +92,9 @@ def main():
     parser.add_argument("--file-culling", "--file-cull", action="store_true", dest="file_culling", help="Enable file culling / AST selection mode")
     parser.add_argument("-js", "--json-select", action="store_true", help="Parse a JSON selection payload from clipboard to automatically select files/functions")
     args = parser.parse_args()
+
+    if args.paths:
+        args.paths = resolve_random_paths(args.paths)
 
     root_dir = os.getcwd()
     max_depth = args.limit
