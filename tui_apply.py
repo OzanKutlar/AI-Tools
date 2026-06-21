@@ -32,7 +32,9 @@ from cc_utils import (
     copy_to_clipboard,
     copy_file_to_clipboard,
     detect_newline,
-    extract_json_from_text
+    extract_json_from_text,
+    extract_xml_from_text,
+    parse_xml_to_dict
 )
 
 def _write_text_preserving(path: str, text: str, original_newline: str | None = None) -> None:
@@ -861,11 +863,12 @@ class OrchestratorAgentApp(App):
     ]
     TITLE = "CombineCopy — Orchestrator Listener"
 
-    def __init__(self, root_dir: str, use_file_clipboard: bool = False, cli_mode: bool = False):
+    def __init__(self, root_dir: str, use_file_clipboard: bool = False, cli_mode: bool = False, xml_mode: bool = False):
         super().__init__()
         self.root_dir = root_dir
         self.use_file_clipboard = use_file_clipboard
         self.cli_mode = cli_mode
+        self.xml_mode = xml_mode
         self.payload = None
         self.last_clipboard = ""
         self.polling_timer = None
@@ -896,6 +899,20 @@ class OrchestratorAgentApp(App):
                 return
             self.last_clipboard = content
             
+            # Check XML first
+            if '<antigravity_payload>' in content:
+                xml_blocks = extract_xml_from_text(content)
+                for xml_str in xml_blocks:
+                    data = parse_xml_to_dict(xml_str)
+                    if data:
+                        if data.get("phase") == "ORCHESTRATE" and "prompt" in data:
+                            self.load_payload(data)
+                            return
+                        elif data.get("phase") == "EXPLORATION" and "request_files" in data:
+                            self.handle_exploration(data)
+                            return
+                            
+            # Fallback to JSON
             if '"phase":' in content and ('"ORCHESTRATE"' in content or '"EXPLORATION"' in content):
                 json_blocks = extract_json_from_text(content)
                 for json_str in json_blocks:
@@ -1042,7 +1059,8 @@ class OrchestratorAgentApp(App):
             ast_map="",
             file_cull=False,
             system_prompt="",
-            agent_type=agent_type
+            agent_type=agent_type,
+            xml_mode=self.xml_mode
         )
         if getattr(self, 'use_file_clipboard', False):
             try:
@@ -1130,13 +1148,14 @@ class AutoAgentApp(App):
     ]
     TITLE = "CombineCopy — Auto Agent Listener"
 
-    def __init__(self, root_dir: str, known_files: list[str] | None = None, revert_mode: bool = False, ignore_initial_clipboard: bool = False, web_mode: bool = False, tfs_mode: bool = False):
+    def __init__(self, root_dir: str, known_files: list[str] | None = None, revert_mode: bool = False, ignore_initial_clipboard: bool = False, web_mode: bool = False, tfs_mode: bool = False, xml_mode: bool = False):
         super().__init__()
         self.root_dir = root_dir
         self.known_files = known_files or []
         self.revert_mode = revert_mode
         self.web_mode = web_mode
         self.tfs_mode = tfs_mode
+        self.xml_mode = xml_mode
         self.ignore_initial_clipboard = ignore_initial_clipboard
         self.last_clipboard = ""
         self.payload = None
@@ -1196,6 +1215,16 @@ class AutoAgentApp(App):
                 return
             self.last_clipboard = content
             
+            # Check XML first
+            if '<antigravity_payload>' in content:
+                xml_blocks = extract_xml_from_text(content)
+                for xml_str in xml_blocks:
+                    data = parse_xml_to_dict(xml_str)
+                    if data and data.get("phase") == "EXECUTION" and "files" in data:
+                        self.load_payload(data)
+                        return
+                        
+            # Fallback to JSON
             if '"phase":' in content and '"EXECUTION"' in content:
                 json_blocks = extract_json_from_text(content)
                 for json_str in json_blocks:
@@ -2084,7 +2113,7 @@ class AutoAgentApp(App):
         else:
             self.exit(None)
 
-def run_auto_agent(root_dir: str, known_files: list[str] | None = None, revert_mode: bool = False, ignore_initial_clipboard: bool = False, web_mode: bool = False):
+def run_auto_agent(root_dir: str, known_files: list[str] | None = None, revert_mode: bool = False, ignore_initial_clipboard: bool = False, web_mode: bool = False, xml_mode: bool = False):
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -2102,7 +2131,8 @@ def run_auto_agent(root_dir: str, known_files: list[str] | None = None, revert_m
                 "known_files": known_files,
                 "revert_mode": revert_mode,
                 "ignore_initial_clipboard": ignore_initial_clipboard,
-                "web_mode": web_mode
+                "web_mode": web_mode,
+                "xml_mode": xml_mode
             }
             with open(in_name, "w", encoding="utf-8") as f:
                 json.dump(args_dict, f)
@@ -2124,7 +2154,7 @@ def run_auto_agent(root_dir: str, known_files: list[str] | None = None, revert_m
                 except Exception:
                     pass
     else:
-        app = AutoAgentApp(root_dir, known_files, revert_mode, ignore_initial_clipboard, web_mode)
+        app = AutoAgentApp(root_dir, known_files, revert_mode, ignore_initial_clipboard, web_mode, xml_mode=xml_mode)
         return app.run()
 
 if __name__ == "__main__":
@@ -2140,7 +2170,8 @@ if __name__ == "__main__":
             known_files=args_dict.get("known_files"),
             revert_mode=args_dict.get("revert_mode", False),
             ignore_initial_clipboard=args_dict.get("ignore_initial_clipboard", False),
-            web_mode=args_dict.get("web_mode", False)
+            web_mode=args_dict.get("web_mode", False),
+            xml_mode=args_dict.get("xml_mode", False)
         )
         res = app.run()
         

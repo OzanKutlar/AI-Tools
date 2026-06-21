@@ -24,6 +24,18 @@ EXPLORATION_ORCHESTRATOR = r"""EXPLORATION: If the user provides an AST map and 
 ```
 The user will run a tool to fetch these files and paste them back to you. Do not proceed to PLANNING until you have all the context you need."""
 
+EXPLORATION_ORCHESTRATOR_XML = r"""EXPLORATION: If the user provides an AST map and you need to see the full content of specific files before you can confidently create an implementation plan, you must request them. Output your request strictly in pure XML format:
+```xml
+<antigravity_payload>
+  <phase>EXPLORATION</phase>
+  <request_files>
+    <path>relative/path/to/file1.py</path>
+    <path>relative/path/to/file2.js</path>
+  </request_files>
+</antigravity_payload>
+```
+The user will run a tool to fetch these files and paste them back to you. Do not proceed to PLANNING until you have all the context you need."""
+
 PLANNING_DEFAULT = r"""PLANNING: Analyze the provided code, understand requirements, and design your approach. You must always start in PLANNING mode and present an Implementation Plan and a Task Checklist directly in your response as inline markdown to document your proposed changes and get user approval, unless the user explicitly asks you not to plan in their message. If the user requests changes to your plan, stay in PLANNING mode, update the plan, and request review again until approved. CRITICAL: Do NOT write the Task Checklist or Implementation Plan into separate file structures, and do NOT assign paths or filenames (such as C:\Users\Ozan\task.md) to them. They should be written directly into your chat response as standard, inline markdown sections. Do NOT wrap them in file-formatted codeblocks. The planning mode should never be written in JSON format or wrapped in code blocks. It should always be written in raw markdown."""
 
 PLANNING_ORCHESTRATOR = r"""PLANNING: Analyze the provided code, understand requirements, and design your approach. You must always start in PLANNING mode and present your plan to document your proposed changes and get user approval. The planning mode should never be written in JSON format."""
@@ -86,6 +98,62 @@ EXECUTION_DEFAULT = r"""EXECUTION: Write code, make changes, and implement your 
    DANGER: `href="#"` MUST be `href=\"#\"`. Failing to escape quotes will critically break the JSON parser.
 4. **Error Recovery**: If the user provides an error regarding a specific file modification (e.g., a search/replace mismatch or JSON syntax error), your next EXECUTION payload must contain ONLY the file that needs correction. Do not re-include other files from the previous payload."""
 
+EXECUTION_DEFAULT_XML = r"""EXECUTION: Write code, make changes, and implement your design. **CRITICAL: You must output your entire response strictly in pure XML format, wrapped in a markdown code block (i.e., use ```xml and ```).** The downstream automated agent relies on this exact schema:
+
+```xml
+<antigravity_payload>
+  <phase>EXECUTION</phase>
+  <markdown>Your explanations, thoughts, and conversational text formatted in standard markdown.</markdown>
+  <commit_message>Conventional git commit message detailing the changes.</commit_message>
+  <files>
+    <!-- Rule 1: CREATE - For brand new files. -->
+    <file>
+      <action>create</action>
+      <path>relative/path/to/new_file.py</path>
+      <content><![CDATA[The COMPLETE, fully functional source code of the new file.]]></content>
+    </file>
+    <!-- Rule 2: MODIFY - For making partial updates to existing files. ALWAYS use `search_replace` blocks for modifications. -->
+    <file>
+      <action>modify</action>
+      <path>relative/path/to/existing_file.py</path>
+      <search_replace>
+        <block>
+          <search><![CDATA[The EXACT lines of existing code to replace. You MUST include sufficient context lines. Your search string MUST perfectly match the original file's whitespace and indentation.]]></search>
+          <replace><![CDATA[The new code that will replace the searched block.]]></replace>
+        </block>
+      </search_replace>
+    </file>
+    <!-- Rule 2 Alternate: If a file is extremely small, or you are completely overwriting it, use "content" instead. -->
+    <file>
+      <action>modify</action>
+      <path>relative/path/to/tiny_file.py</path>
+      <content><![CDATA[The COMPLETE, fully updated source code.]]></content>
+    </file>
+    <!-- Rule 2 Alternate 2: REGEX MASS REPLACE - For replacing patterns across a file. -->
+    <file>
+      <action>modify</action>
+      <path>relative/path/to/existing_file.py</path>
+      <regex_replace>
+        <block>
+          <pattern><![CDATA[\bWizard\b]]></pattern>
+          <replacement><![CDATA[Witch]]></replacement>
+        </block>
+      </regex_replace>
+    </file>
+    <!-- Rule 3: DELETE - For removing files. -->
+    <file>
+      <action>delete</action>
+      <path>relative/path/to/dead_file.py</path>
+    </file>
+  </files>
+</antigravity_payload>
+```
+
+**Execution Constraints:** 1. You must explicitly define boundaries for the downstream agent.
+2. Never use CLI tools. Restrict your commands purely to file creation, modification, or deletion via the XML payload above.
+3. **CRITICAL XML FORMATTING**: You MUST wrap all code modifications inside `<![CDATA[ ... ]]>` blocks to prevent unescaped angle brackets or ampersands from breaking the XML parser. Do NOT attempt to manually escape quotes; rely entirely on CDATA.
+4. **Error Recovery**: If the user provides an error regarding a specific file modification, your next EXECUTION payload must contain ONLY the file that needs correction. Do not re-include other files from the previous payload."""
+
 EXECUTION_CLI = r"""EXECUTION: Write code, make changes, and implement your design. **CRITICAL: You must output your entire response strictly in pure JSON format, wrapped in a markdown code block (i.e., use ```json and ```).** The downstream automated agent relies on this exact schema:
 
 {
@@ -147,6 +215,67 @@ EXECUTION_CLI = r"""EXECUTION: Write code, make changes, and implement your desi
 3. **CRITICAL JSON FORMATTING**: You MUST properly escape all internal double quotes (`\"`) and backslashes (`\\`) inside your string values (e.g., HTML attributes like `class=\"flex\"` or regex patterns). Failing to escape quotes will break the JSON parser.
 4. **Error Recovery**: If the user provides an error regarding a specific file modification (e.g., a search/replace mismatch or JSON syntax error), your next EXECUTION payload must contain ONLY the file that needs correction. Do not re-include other files from the previous payload."""
 
+EXECUTION_CLI_XML = r"""EXECUTION: Write code, make changes, and implement your design. **CRITICAL: You must output your entire response strictly in pure XML format, wrapped in a markdown code block (i.e., use ```xml and ```).** The downstream automated agent relies on this exact schema:
+
+```xml
+<antigravity_payload>
+  <phase>EXECUTION</phase>
+  <markdown>Your explanations, thoughts, and conversational text formatted in standard markdown.</markdown>
+  <commit_message>Conventional git commit message detailing the changes.</commit_message>
+  <files>
+    <!-- Rule 1: CREATE - For brand new files. -->
+    <file>
+      <action>create</action>
+      <path>relative/path/to/new_file.py</path>
+      <content><![CDATA[The COMPLETE, fully functional source code of the new file.]]></content>
+    </file>
+    <!-- Rule 2: MODIFY - For making partial updates to existing files. ALWAYS use `search_replace` blocks for modifications. -->
+    <file>
+      <action>modify</action>
+      <path>relative/path/to/existing_file.py</path>
+      <search_replace>
+        <block>
+          <search><![CDATA[The EXACT lines of existing code to replace. You MUST include sufficient context lines. Your search string MUST perfectly match the original file's whitespace and indentation.]]></search>
+          <replace><![CDATA[The new code that will replace the searched block.]]></replace>
+        </block>
+      </search_replace>
+    </file>
+    <!-- Rule 2 Alternate: If a file is extremely small, or you are completely overwriting it, use "content" instead. -->
+    <file>
+      <action>modify</action>
+      <path>relative/path/to/tiny_file.py</path>
+      <content><![CDATA[The COMPLETE, fully updated source code.]]></content>
+    </file>
+    <!-- Rule 2 Alternate 2: REGEX MASS REPLACE - For replacing patterns across a file. -->
+    <file>
+      <action>modify</action>
+      <path>relative/path/to/existing_file.py</path>
+      <regex_replace>
+        <block>
+          <pattern><![CDATA[\bWizard\b]]></pattern>
+          <replacement><![CDATA[Witch]]></replacement>
+        </block>
+      </regex_replace>
+    </file>
+    <!-- Rule 3: DELETE - For removing files. -->
+    <file>
+      <action>delete</action>
+      <path>relative/path/to/dead_file.py</path>
+    </file>
+    <!-- Rule 4: COMMAND - For executing CLI commands. -->
+    <file>
+      <action>command</action>
+      <command><![CDATA[npm run test]]></command>
+    </file>
+  </files>
+</antigravity_payload>
+```
+
+**Execution Constraints:** 1. You must explicitly define boundaries for the downstream agent.
+2. You can use CLI tools by emitting a "command" action in the XML payload. Restrict your actions purely to file creation, modification, deletion, and command execution via the XML payload above.
+3. **CRITICAL XML FORMATTING**: You MUST wrap all code modifications inside `<![CDATA[ ... ]]>` blocks to prevent unescaped angle brackets or ampersands from breaking the XML parser. Do NOT attempt to manually escape quotes; rely entirely on CDATA.
+4. **Error Recovery**: If the user provides an error regarding a specific file modification, your next EXECUTION payload must contain ONLY the file that needs correction. Do not re-include other files from the previous payload."""
+
 EXECUTION_ORCHESTRATOR = r"""ORCHESTRATE: Once the user approves your plan, output the files needed and precise specifications. **CRITICAL: You must output your entire response strictly in pure JSON format, wrapped in a markdown code block (i.e., use ```json and ```).** The script relies on this exact schema:
 
 {
@@ -164,6 +293,24 @@ EXECUTION_ORCHESTRATOR = r"""ORCHESTRATE: Once the user approves your plan, outp
 1. **CRITICAL JSON FORMATTING**: You MUST properly escape all internal double quotes (`\"`) and backslashes (`\\`) inside your string values.
    DANGER: JSX/HTML attributes like `className="flex"` MUST be written as `className=\"flex\"` inside JSON strings.
    DANGER: `href="#"` MUST be `href=\"#\"`. Failing to escape quotes will critically break the JSON parser."""
+
+EXECUTION_ORCHESTRATOR_XML = r"""ORCHESTRATE: Once the user approves your plan, output the files needed and precise specifications. **CRITICAL: You must output your entire response strictly in pure XML format, wrapped in a markdown code block (i.e., use ```xml and ```).** The script relies on this exact schema:
+
+```xml
+<antigravity_payload>
+  <phase>ORCHESTRATE</phase>
+  <markdown>Your explanations, thoughts, and conversational text formatted in standard markdown.</markdown>
+  <files>
+    <path>relative/path/to/relevant_file1.py</path>
+    <path>relative/path/to/relevant_file2.py</path>
+  </files>
+  <original_request><![CDATA[The exact original request provided by the user.]]></original_request>
+  <prompt><![CDATA[Highly detailed instructions for the execution model. List EXACTLY what libraries, functions, and variables to modify. Provide pseudo-code or specific search/replace requirements to ensure the downstream model cannot fail.]]></prompt>
+</antigravity_payload>
+```
+
+**Orchestration Constraints:**
+1. **CRITICAL XML FORMATTING**: You MUST wrap all code or complex instructions inside `<![CDATA[ ... ]]>` blocks to prevent unescaped angle brackets or ampersands from breaking the XML parser. Do NOT attempt to manually escape quotes."""
 
 VERIFICATION = r"""VERIFICATION: Test your changes conceptually and validate correctness. Ask the user to run specific commands or tests to verify the code, and evaluate the outputs they provide. Present a Walkthrough / Verification Summary in the chat after completing verification to document what was accomplished, what was tested, and validation results."""
 
@@ -184,6 +331,28 @@ Output the payload wrapped in a markdown code block:
     }
   ]
 }
+```
+The user's tool will automatically parse this and copy the requested context into your clipboard.
+</file_culling_instructions>"""
+
+FILE_CULLING_XML = r"""<file_culling_instructions>
+At any point during the PLANNING phase, you can request full files or specific functions/classes of files to build your understanding.
+To do so, output an XML payload using the "SELECT" phase. You can mix full file requests and specific function requests.
+Output the payload wrapped in a markdown code block:
+```xml
+<antigravity_payload>
+  <phase>SELECT</phase>
+  <files>
+    <path>relative/path/to/full_file.py</path>
+  </files>
+  <functions>
+    <item>
+      <path>relative/path/to/partial_file.py</path>
+      <name>function_name</name>
+      <name>ClassName</name>
+    </item>
+  </functions>
+</antigravity_payload>
 ```
 The user's tool will automatically parse this and copy the requested context into your clipboard.
 </file_culling_instructions>"""
@@ -319,22 +488,22 @@ def get_planning(agent_type: str = "default") -> str:
         return PLANNING_ORCHESTRATOR
     return PLANNING_DEFAULT
 
-def get_file_cull() -> str:
-    return FILE_CULLING
+def get_file_cull(xml_mode: bool = False) -> str:
+    return FILE_CULLING_XML if xml_mode else FILE_CULLING
 
-def get_execution(agent_type: str = "default") -> str:
+def get_execution(agent_type: str = "default", xml_mode: bool = False) -> str:
     parts = [MODE_DESCRIPTIONS_HEADER]
     if agent_type == "orchestrator":
-        parts.append(EXPLORATION_ORCHESTRATOR)
+        parts.append(EXPLORATION_ORCHESTRATOR_XML if xml_mode else EXPLORATION_ORCHESTRATOR)
         parts.append(PLANNING_ORCHESTRATOR)
-        parts.append(EXECUTION_ORCHESTRATOR)
+        parts.append(EXECUTION_ORCHESTRATOR_XML if xml_mode else EXECUTION_ORCHESTRATOR)
     elif agent_type == "cli":
         parts.append(PLANNING_DEFAULT)
-        parts.append(EXECUTION_CLI)
+        parts.append(EXECUTION_CLI_XML if xml_mode else EXECUTION_CLI)
         parts.append(VERIFICATION)
     else:
         parts.append(PLANNING_DEFAULT)
-        parts.append(EXECUTION_DEFAULT)
+        parts.append(EXECUTION_DEFAULT_XML if xml_mode else EXECUTION_DEFAULT)
         parts.append(VERIFICATION)
         
     parts.append("</mode_descriptions>")
@@ -355,19 +524,22 @@ def get_ast(ast_map: str) -> str:
 def get_file_context(file_context: str) -> str:
     return f"--- FILE CONTEXT ---\n{file_context}"
 
-def get_system_prompt_important(agent_type: str = "default") -> str:
+def get_system_prompt_important(agent_type: str = "default", xml_mode: bool = False) -> str:
+    mode_name = "XML" if xml_mode else "JSON"
+    code_block = "xml" if xml_mode else "json"
+    
     lines = [
         "--- SYSTEM REMINDER ---",
         "CRITICAL: You must ALWAYS start in PLANNING mode.",
-        "Do NOT output EXECUTION or ORCHESTRATION JSON yet."
+        f"Do NOT output EXECUTION or ORCHESTRATION {mode_name} yet."
     ]
     if agent_type == "orchestrator":
-        lines.append("When you enter PLANNING mode, present your plan to document your proposed changes and get user approval. In ORCHESTRATION mode, you MUST wrap the JSON output in a markdown code block (```json).")
-        lines.append("Wait for the user to review and approve your plan before outputting orchestration JSON.")
+        lines.append(f"When you enter PLANNING mode, present your plan to document your proposed changes and get user approval. In ORCHESTRATION mode, you MUST wrap the {mode_name} output in a markdown code block (```{code_block}).")
+        lines.append(f"Wait for the user to review and approve your plan before outputting orchestration {mode_name}.")
     else:
-        lines.append("When you enter PLANNING mode, present your Implementation Plan and Task Checklist directly as standard inline markdown sections. Do NOT output them in file-formatted codeblocks and do NOT assign filenames or paths to them (e.g. do not label them as C:\\Users\\Ozan\\task.md or C:\\Users\\Ozan\\implementation_plan.md). In EXECUTION mode, you MUST wrap the JSON output in a markdown code block (```json).")
+        lines.append(f"When you enter PLANNING mode, present your Implementation Plan and Task Checklist directly as standard inline markdown sections. Do NOT output them in file-formatted codeblocks and do NOT assign filenames or paths to them (e.g. do not label them as C:\\Users\\Ozan\\task.md or C:\\Users\\Ozan\\implementation_plan.md). In EXECUTION mode, you MUST wrap the {mode_name} output in a markdown code block (```{code_block}).")
         lines.append("Create an inline implementation plan and wait for the user to review and approve it.")
-        lines.append("When in EXECUTION mode, your commit message in the JSON payload MUST strictly adhere to this exact multi-line template structure:")
+        lines.append(f"When in EXECUTION mode, your commit message in the {mode_name} payload MUST strictly adhere to this exact multi-line template structure:")
         lines.append("type(scope) : description")
         lines.append("extra desc")
         lines.append(" extra desc")
@@ -375,13 +547,13 @@ def get_system_prompt_important(agent_type: str = "default") -> str:
 
 # --- Composition Functions ---
 
-def get_system_prompt(agent_type: str = "default", file_cull: bool = False) -> str:
+def get_system_prompt(agent_type: str = "default", file_cull: bool = False, xml_mode: bool = False) -> str:
     parts = []
     parts.append(get_introduction(agent_type))
-    parts.append(get_execution(agent_type))  # get_execution already includes planning strings internally
+    parts.append(get_execution(agent_type, xml_mode))  # get_execution already includes planning strings internally
     
     if file_cull:
-        parts.append(get_file_cull())
+        parts.append(get_file_cull(xml_mode))
         
     rest_str = get_rest(agent_type)
     if rest_str:
@@ -395,7 +567,8 @@ def build_prompt(
     ast_map: str = "",
     file_cull: bool = False,
     system_prompt: str = "",
-    agent_type: str = "default"
+    agent_type: str = "default",
+    xml_mode: bool = False
 ) -> str:
     parts = []
     
@@ -414,11 +587,11 @@ def build_prompt(
     if system_prompt:
         parts.append(f"--- SYSTEM INSTRUCTIONS ---\n{system_prompt}")
     else:
-        parts.append(f"--- SYSTEM INSTRUCTIONS ---\n{get_system_prompt(agent_type, file_cull)}")
+        parts.append(f"--- SYSTEM INSTRUCTIONS ---\n{get_system_prompt(agent_type, file_cull, xml_mode)}")
         
     if user_request:
         parts.append(get_user_prompt(user_request, reminder=True))
         
-    parts.append(get_system_prompt_important(agent_type))
+    parts.append(get_system_prompt_important(agent_type, xml_mode))
     
     return "\n\n".join(parts)

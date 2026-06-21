@@ -91,6 +91,7 @@ def main():
     parser.add_argument("--file", action="store_true", help="Save prompt to a temp file and copy the file to clipboard")
     parser.add_argument("--file-culling", "--file-cull", action="store_true", dest="file_culling", help="Enable file culling / AST selection mode")
     parser.add_argument("-js", "--json-select", action="store_true", help="Parse a JSON selection payload from clipboard to automatically select files/functions")
+    parser.add_argument("-x", "--xml", action="store_true", help="Instruct the AI to use XML for payloads instead of JSON to completely avoid quote escaping issues.")
     args = parser.parse_args()
 
     if args.paths:
@@ -129,13 +130,13 @@ def main():
 
     if (args.auto or args.revert or args.orchestrate) and not (args.select or args.file_types or args.paths or args.system is not None or args.cli):
         if args.orchestrate:
-            app = OrchestratorAgentApp(root_dir, use_file_clipboard=args.file, cli_mode=args.cli)
+            app = OrchestratorAgentApp(root_dir, use_file_clipboard=args.file, cli_mode=args.cli, xml_mode=args.xml)
             result = app.run()
             if result:
                 console.print(Panel("Orchestrator payload successfully copied to clipboard.", title="Success", style="bold green"))
             return
         else:
-            app = AutoAgentApp(root_dir, revert_mode=args.revert, web_mode=args.web, tfs_mode=args.tfs)
+            app = AutoAgentApp(root_dir, revert_mode=args.revert, web_mode=args.web, tfs_mode=args.tfs, xml_mode=args.xml)
             result = app.run()
             if result:
                 print_auto_summary(result)
@@ -176,9 +177,9 @@ def main():
         partial_files = {}
 
         if args.json_select:
-            console.print("[bold cyan]Phase: JSON Selection Parsing[/bold cyan]")
+            console.print("[bold cyan]Phase: Selection Parsing[/bold cyan]")
             import pyperclip
-            from cc_utils import extract_json_from_text, intelligent_json_fix
+            from cc_utils import extract_json_from_text, intelligent_json_fix, extract_xml_from_text, parse_xml_to_dict
             try:
                 clipboard_content = pyperclip.paste().strip()
             except Exception as e:
@@ -189,18 +190,28 @@ def main():
                 console.print("[bold red]Clipboard is empty.[/bold red]")
                 return
 
-            results = extract_json_from_text(clipboard_content)
-
             selection_data = None
-            for json_str in results:
-                data, _ = intelligent_json_fix(json_str)
-                if data and isinstance(data, dict):
-                    if data.get("phase") == "SELECT" or "files" in data or "functions" in data:
-                        selection_data = data
-                        break
+            
+            # First check for XML
+            xml_results = extract_xml_from_text(clipboard_content)
+            for xml_str in xml_results:
+                data = parse_xml_to_dict(xml_str)
+                if data and (data.get("phase") == "SELECT" or "files" in data or "functions" in data):
+                    selection_data = data
+                    break
+                    
+            # Fallback to JSON
+            if not selection_data:
+                results = extract_json_from_text(clipboard_content)
+                for json_str in results:
+                    data, _ = intelligent_json_fix(json_str)
+                    if data and isinstance(data, dict):
+                        if data.get("phase") == "SELECT" or "files" in data or "functions" in data:
+                            selection_data = data
+                            break
 
             if not selection_data:
-                console.print("[bold red]No valid SELECT JSON payload found on clipboard.[/bold red]")
+                console.print("[bold red]No valid SELECT JSON or XML payload found on clipboard.[/bold red]")
                 return
 
             console.print("[green]Found valid JSON selection payload.[/green]")
@@ -322,7 +333,7 @@ def main():
             console.print("[bold cyan]Phase: Instruction & System Prompt[/bold cyan]")
             sys_arg = args.system if args.system else 'DEFAULT'
             if sys_arg == 'DEFAULT' or sys_arg == '':
-                sys_prompt_text = get_system_prompt(agent_type=agent_type, file_cull=args.file_culling)
+                sys_prompt_text = get_system_prompt(agent_type=agent_type, file_cull=args.file_culling, xml_mode=args.xml)
             else:
                 try:
                     with open(sys_arg, 'r', encoding='utf-8') as f:
@@ -427,7 +438,8 @@ def main():
                                 ast_map=generate_tree_string(found_files, root_dir) if args.file_culling else "",
                                 file_cull=args.file_culling,
                                 system_prompt=user_request_data["system"],
-                                agent_type=agent_type
+                                agent_type=agent_type,
+                                xml_mode=args.xml
                             )
                         else:
                             full_text = file_context_str
@@ -445,7 +457,7 @@ def main():
                             
                         if batch_num == batch_count and user_request_data:
                             parts.append(get_user_prompt(user_request_data["request"], reminder=True))
-                            parts.append(get_system_prompt_important(agent_type))
+                            parts.append(get_system_prompt_important(agent_type, xml_mode=args.xml))
                             
                         full_text = "\n\n".join(parts)
 
@@ -496,7 +508,7 @@ def main():
     if args.auto or args.revert or args.orchestrate:
         if args.orchestrate:
             console.print(f"\n[bold cyan]Phase: Orchestrator Agent Execution[/bold cyan]")
-            app = OrchestratorAgentApp(root_dir, use_file_clipboard=args.file, cli_mode=args.cli)
+            app = OrchestratorAgentApp(root_dir, use_file_clipboard=args.file, cli_mode=args.cli, xml_mode=args.xml)
             result = app.run()
             if result:
                 console.print(Panel("Orchestrator payload successfully copied to clipboard.", title="Success", style="bold green"))
@@ -505,7 +517,7 @@ def main():
             if args.web_apply:
                 phase_name += " [WEB MACRO MODE]"
             console.print(f"\n[bold cyan]Phase: {phase_name}[/bold cyan]")
-            app = AutoAgentApp(root_dir, all_known_files, revert_mode=args.revert, ignore_initial_clipboard=True, web_mode=args.web_apply, tfs_mode=args.tfs)
+            app = AutoAgentApp(root_dir, all_known_files, revert_mode=args.revert, ignore_initial_clipboard=True, web_mode=args.web_apply, tfs_mode=args.tfs, xml_mode=args.xml)
             result = app.run()
             if result:
                 print_auto_summary(result)

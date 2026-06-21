@@ -170,6 +170,101 @@ def detect_newline(path: str) -> str:
     except Exception:
         return ""
 
+def extract_xml_from_text(text: str) -> list[str]:
+    """Extracts XML antigravity payloads from text."""
+    results = []
+    import re
+    code_blocks = re.findall(r'```(?:xml)?\s*(<antigravity_payload>.*?</antigravity_payload>)\s*```', text, re.DOTALL | re.IGNORECASE)
+    if code_blocks:
+        return code_blocks
+        
+    # Fallback heuristic
+    start_idx = text.find('<antigravity_payload>')
+    end_idx = text.rfind('</antigravity_payload>')
+    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+        results.append(text[start_idx:end_idx+22])
+    return results
+
+def parse_xml_to_dict(xml_str: str) -> dict:
+    """Parses the strict <antigravity_payload> schema back into the equivalent JSON dict format."""
+    import re
+    
+    def get_tag_val(xml_chunk, tag):
+        m = re.search(f'<{tag}>(.*?)</{tag}>', xml_chunk, re.DOTALL)
+        if not m: return None
+        val = m.group(1)
+        cdata_m = re.search(r'<!\[CDATA\[(.*?)\]\]>', val, re.DOTALL)
+        if cdata_m: return cdata_m.group(1)
+        return val.strip() if not val.isspace() else val
+        
+    data = {}
+    data["phase"] = get_tag_val(xml_str, "phase")
+    data["markdown"] = get_tag_val(xml_str, "markdown")
+    data["commit_message"] = get_tag_val(xml_str, "commit_message")
+    data["original_request"] = get_tag_val(xml_str, "original_request")
+    data["prompt"] = get_tag_val(xml_str, "prompt")
+    
+    # Handle EXPLORATION req_files
+    req_files_m = re.search(r'<request_files>(.*?)</request_files>', xml_str, re.DOTALL)
+    if req_files_m:
+        data["request_files"] = re.findall(r'<path>(.*?)</path>', req_files_m.group(1), re.DOTALL)
+        
+    # Handle files
+    files_m = re.search(r'<files>(.*?)</files>', xml_str, re.DOTALL)
+    if files_m:
+        if data["phase"] == "ORCHESTRATE":
+            data["files"] = re.findall(r'<path>(.*?)</path>', files_m.group(1), re.DOTALL)
+        else:
+            files = []
+            for file_chunk in re.findall(r'<file>(.*?)</file>', files_m.group(1), re.DOTALL):
+                f_obj = {}
+                f_obj["action"] = get_tag_val(file_chunk, "action")
+                f_obj["path"] = get_tag_val(file_chunk, "path")
+                cmd = get_tag_val(file_chunk, "command")
+                if cmd: f_obj["command"] = cmd
+                
+                content = get_tag_val(file_chunk, "content")
+                if content is not None:
+                    f_obj["content"] = content
+                
+                sr_m = re.search(r'<search_replace>(.*?)</search_replace>', file_chunk, re.DOTALL)
+                if sr_m:
+                    sr_blocks = []
+                    for block in re.findall(r'<block>(.*?)</block>', sr_m.group(1), re.DOTALL):
+                        s = get_tag_val(block, "search")
+                        r = get_tag_val(block, "replace")
+                        if s is not None and r is not None:
+                            sr_blocks.append({"search": s, "replace": r})
+                    if sr_blocks:
+                        f_obj["search_replace"] = sr_blocks
+                        
+                rr_m = re.search(r'<regex_replace>(.*?)</regex_replace>', file_chunk, re.DOTALL)
+                if rr_m:
+                    rr_blocks = []
+                    for block in re.findall(r'<block>(.*?)</block>', rr_m.group(1), re.DOTALL):
+                        p = get_tag_val(block, "pattern")
+                        r = get_tag_val(block, "replacement")
+                        if p is not None and r is not None:
+                            rr_blocks.append({"pattern": p, "replacement": r})
+                    if rr_blocks:
+                        f_obj["regex_replace"] = rr_blocks
+                        
+                files.append(f_obj)
+            data["files"] = files
+            
+    # Handle SELECT functions
+    funcs_m = re.search(r'<functions>(.*?)</functions>', xml_str, re.DOTALL)
+    if funcs_m:
+        funcs = []
+        for item in re.findall(r'<item>(.*?)</item>', funcs_m.group(1), re.DOTALL):
+            path = get_tag_val(item, "path")
+            names = re.findall(r'<name>(.*?)</name>', item, re.DOTALL)
+            if path:
+                funcs.append({"path": path, "names": names})
+        data["functions"] = funcs
+        
+    return data
+
 def extract_json_from_text(text: str) -> list[str]:
     """Extracts JSON objects from text using multiple strategies."""
     results = []
