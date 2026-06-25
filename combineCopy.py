@@ -88,11 +88,35 @@ def main():
     parser.add_argument("--web-apply", action="store_true", dest="web_apply", help="Enable web macro mode. Translates applies into simulated keyboard strokes for web IDEs.")
     parser.add_argument("--tfs", action="store_true", help="Use TFVC (tf.exe) instead of git for checkout and checkin operations.")
     parser.add_argument("--system", nargs='?', const='DEFAULT', default=None, help="Inject system prompt and user instructions. Optionally provide a path to a custom system prompt file.")
+    parser.add_argument("--system-only", action="store_true", help="Copy only the system prompt to the clipboard and exit.")
     parser.add_argument("--file", action="store_true", help="Save prompt to a temp file and copy the file to clipboard")
     parser.add_argument("--file-culling", "--file-cull", action="store_true", dest="file_culling", help="Enable file culling / AST selection mode")
     parser.add_argument("-js", "--json-select", action="store_true", help="Parse a JSON selection payload from clipboard to automatically select files/functions")
     parser.add_argument("-x", "--xml", action="store_true", help="Instruct the AI to use XML for payloads instead of JSON to completely avoid quote escaping issues.")
     args = parser.parse_args()
+
+    if args.system_only:
+        agent_type = "orchestrator" if args.orchestrate else "cli" if args.cli else "default"
+        sys_prompt = get_system_prompt(agent_type=agent_type, file_cull=args.file_culling, xml_mode=args.xml)
+        important = get_system_prompt_important(agent_type=agent_type, xml_mode=args.xml)
+        
+        full_sys_prompt = f"--- SYSTEM INSTRUCTIONS ---\n{sys_prompt}\n\n{important}"
+        
+        if args.file:
+            try:
+                fd, temp_path = tempfile.mkstemp(prefix="combineCopy_sysprompt_", suffix=".txt", text=True)
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    f.write(full_sys_prompt)
+                if copy_file_to_clipboard(temp_path):
+                    console.print(Panel(f"[bold green]System prompt saved to {temp_path} and copied to clipboard![/bold green]", title="Success"))
+            except Exception as e:
+                console.print(f"[bold red]Failed to save/copy file:[/bold red] {e}")
+        else:
+            if copy_to_clipboard(full_sys_prompt):
+                console.print(Panel("[bold green]System prompt copied to clipboard![/bold green]", title="Success"))
+            else:
+                console.print(full_sys_prompt)
+        return
 
     if args.paths:
         args.paths = resolve_random_paths(args.paths)
