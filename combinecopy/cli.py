@@ -20,6 +20,10 @@ try:
 except ImportError:
     KEYBOARD_AVAILABLE = False
 
+# Ensure the root directory is in sys.path so 'combinecopy' can be imported
+# regardless of where the script is executed from.
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from combinecopy.utils import (
     console,
     safe_read_file,
