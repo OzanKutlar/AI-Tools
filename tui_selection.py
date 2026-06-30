@@ -56,7 +56,7 @@ class SelectionTree(Tree):
         if hasattr(self.app, "action_toggle_ignore"):
             self.app.action_toggle_ignore()
 
-from cc_utils import extract_blocks, safe_read_file
+from cc_utils import get_cached_blocks
 
 def get_ignore_filepath(root_dir: str) -> str:
     dir_path = os.path.expanduser("~/.configs/combineCopy")
@@ -288,33 +288,29 @@ class FileSelector(App):
                         # If allow_expand isn't supported, we MUST eagerly load if ast_mode is True
                         if self.ast_mode:
                             file_node.data["blocks_loaded"] = True
-                            content = safe_read_file(file_path)
-                            if content and not content.startswith("(This is a binary"):
-                                blocks = extract_blocks(file_path, content)
-                                for idx, b in enumerate(blocks):
-                                    block_key = f"{file_path}::{b['name']}"
-                                    block_saved = saved_states.get(block_key)
-                                    block_state = block_saved["state"] if block_saved else file_state
-                                    file_node.add_leaf(
-                                        self._make_label(b["name"], block_state, "block", False, self.ast_mode, is_ignored),
-                                        data={"type": "block", "state": block_state, "file_path": file_path, "block_idx": idx, "name": b["name"], "start": b["start"], "end": b["end"], "is_ignored": is_ignored}
-                                    )
+                            blocks = get_cached_blocks(file_path, self.root_dir)
+                            for idx, b in enumerate(blocks):
+                                block_key = f"{file_path}::{b['name']}"
+                                block_saved = saved_states.get(block_key)
+                                block_state = block_saved["state"] if block_saved else file_state
+                                file_node.add_leaf(
+                                    self._make_label(b["name"], block_state, "block", False, self.ast_mode, is_ignored),
+                                    data={"type": "block", "state": block_state, "file_path": file_path, "block_idx": idx, "name": b["name"], "start": b["start"], "end": b["end"], "is_ignored": is_ignored}
+                                )
 
                     # Eagerly load blocks if we have saved partial states to restore (e.g., during active search rebuilds)
                     if self.ast_mode and not file_node.data.get("blocks_loaded"):
                         has_saved_blocks = any(k.startswith(f"{file_path}::") for k in saved_states)
                         if has_saved_blocks:
-                            content = safe_read_file(file_path)
-                            if content and not content.startswith("(This is a binary"):
-                                blocks = extract_blocks(file_path, content)
-                                for idx, b in enumerate(blocks):
-                                    block_key = f"{file_path}::{b['name']}"
-                                    block_saved = saved_states.get(block_key)
-                                    block_state = block_saved["state"] if block_saved else file_state
-                                    file_node.add_leaf(
-                                        self._make_label(b["name"], block_state, "block", False, self.ast_mode, is_ignored),
-                                        data={"type": "block", "state": block_state, "file_path": file_path, "block_idx": idx, "name": b["name"], "start": b["start"], "end": b["end"], "is_ignored": is_ignored}
-                                    )
+                            blocks = get_cached_blocks(file_path, self.root_dir)
+                            for idx, b in enumerate(blocks):
+                                block_key = f"{file_path}::{b['name']}"
+                                block_saved = saved_states.get(block_key)
+                                block_state = block_saved["state"] if block_saved else file_state
+                                file_node.add_leaf(
+                                    self._make_label(b["name"], block_state, "block", False, self.ast_mode, is_ignored),
+                                    data={"type": "block", "state": block_state, "file_path": file_path, "block_idx": idx, "name": b["name"], "start": b["start"], "end": b["end"], "is_ignored": is_ignored}
+                                )
                             file_node.data["blocks_loaded"] = True
                             file_node.expand()
                 else:
@@ -429,14 +425,12 @@ class FileSelector(App):
             file_path = node.data["path"]
             file_state = node.data.get("state", "unchecked")
             is_ignored = node.data.get("is_ignored", False)
-            content = safe_read_file(file_path)
-            if content and not content.startswith("(This is a binary"):
-                blocks = extract_blocks(file_path, content)
-                for idx, b in enumerate(blocks):
-                    node.add_leaf(
-                        self._make_label(b["name"], file_state, "block", False, self.ast_mode, is_ignored),
-                        data={"type": "block", "state": file_state, "file_path": file_path, "block_idx": idx, "name": b["name"], "start": b["start"], "end": b["end"], "is_ignored": is_ignored}
-                    )
+            blocks = get_cached_blocks(file_path, self.root_dir)
+            for idx, b in enumerate(blocks):
+                node.add_leaf(
+                    self._make_label(b["name"], file_state, "block", False, self.ast_mode, is_ignored),
+                    data={"type": "block", "state": file_state, "file_path": file_path, "block_idx": idx, "name": b["name"], "start": b["start"], "end": b["end"], "is_ignored": is_ignored}
+                )
             node.data["blocks_loaded"] = True
 
     def on_tree_node_highlighted(self, event: Tree.NodeHighlighted) -> None:

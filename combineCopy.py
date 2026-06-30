@@ -199,6 +199,7 @@ def main():
         found_files = []
         important_files = None
         partial_files = {}
+        missing_files_warnings = []
 
         if args.json_select:
             console.print("[bold cyan]Phase: Selection Parsing[/bold cyan]")
@@ -242,28 +243,54 @@ def main():
             found_files = []
             important_files = []
             partial_files = {}
+            
+            from cc_utils import prime_ast_cache, get_cached_blocks, resolve_paths
+
+            with console.status("[bold green]Scanning directory structure...[/bold green]", spinner="dots"):
+                scanned_files = get_files_recursive(root_dir, 0, max_depth, ext_filters, exclude_dirs=args.exclude)
+                
+            prime_ast_cache(root_dir, scanned_files)
 
             full_files_list = selection_data.get("files", [])
-            for f in full_files_list:
-                abs_path = os.path.abspath(os.path.join(root_dir, f))
-                if os.path.exists(abs_path) and os.path.isfile(abs_path):
-                    found_files.append(abs_path)
-                    important_files.append(abs_path)
-                    console.print(f"  Selected full file: [cyan]{f}[/cyan]")
-                else:
-                    console.print(f"  [yellow]Warning:[/yellow] File not found: [red]{f}[/red]")
-
             functions_list = selection_data.get("functions", [])
+            
+            req_paths = set(full_files_list)
+            for entry in functions_list:
+                if entry.get("path"):
+                    req_paths.add(entry.get("path"))
+                    
+            resolved_map, ambiguous_map, missing_list = resolve_paths(req_paths, scanned_files, root_dir)
+            
+            if ambiguous_map or missing_list:
+                from tui_resolve import ResolutionApp
+                app = ResolutionApp(ambiguous_map, missing_list)
+                user_resolved = app.run()
+                if user_resolved is None:
+                    console.print("[bold yellow]Resolution cancelled by user.[/bold yellow]")
+                    return
+                resolved_map.update(user_resolved)
+                
+            missing_files_warnings = [p for p in req_paths if p not in resolved_map]
+            if missing_files_warnings:
+                console.print(f"[bold yellow]Warning: {len(missing_files_warnings)} requested files could not be resolved and will be skipped.[/bold yellow]")
+
+            found_files_final = []
+            for f in full_files_list:
+                if f in resolved_map:
+                    rel_path = resolved_map[f]
+                    abs_path = os.path.abspath(os.path.join(root_dir, rel_path))
+                    found_files_final.append(abs_path)
+                    important_files.append(abs_path)
+                    console.print(f"  Selected full file: [cyan]{rel_path}[/cyan] (Resolved from {f})")
+
             for entry in functions_list:
                 fpath = entry.get("path")
-                names = entry.get("names", [])
-                if not fpath:
-                    continue
-                abs_path = os.path.abspath(os.path.join(root_dir, fpath))
-                if os.path.exists(abs_path) and os.path.isfile(abs_path):
-                    content = safe_read_file(abs_path)
-                    from cc_utils import extract_blocks
-                    blocks = extract_blocks(abs_path, content)
+                if fpath in resolved_map:
+                    rel_path = resolved_map[fpath]
+                    abs_path = os.path.abspath(os.path.join(root_dir, rel_path))
+                    names = entry.get("names", [])
+                    
+                    blocks = get_cached_blocks(abs_path, root_dir)
                     matched_blocks = []
                     for name in names:
                         found_block = False
@@ -272,19 +299,18 @@ def main():
                                 matched_blocks.append(b)
                                 found_block = True
                         if not found_block:
-                            console.print(f"  [yellow]Warning:[/yellow] Function/Class '[red]{name}[/red]' not found in [cyan]{fpath}[/cyan]")
+                            console.print(f"  [yellow]Warning:[/yellow] Function/Class '[red]{name}[/red]' not found in [cyan]{rel_path}[/cyan]")
                     
                     if matched_blocks:
-                        found_files.append(abs_path)
+                        found_files_final.append(abs_path)
                         partial_files[abs_path] = matched_blocks
-                        console.print(f"  Selected functions from [cyan]{fpath}[/cyan]: {', '.join(names)}")
-                else:
-                    console.print(f"  [yellow]Warning:[/yellow] File not found for partial selection: [red]{fpath}[/red]")
+                        console.print(f"  Selected functions from [cyan]{rel_path}[/cyan]: {', '.join(names)}")
 
-            if not found_files:
+            if not found_files_final:
                 console.print("[bold red]No files were successfully selected from the JSON payload.[/bold red]")
                 return
 
+            found_files = found_files_final
             all_known_files = list(found_files)
 
         else:
@@ -319,6 +345,10 @@ def main():
                 with console.status("[bold green]Scanning directory structure...[/bold green]", spinner="dots"):
                     found_files = get_files_recursive(root_dir, 0, max_depth, ext_filters, exclude_dirs=args.exclude)
             
+            if args.file_culling or args.select:
+                from cc_utils import prime_ast_cache
+                prime_ast_cache(root_dir, found_files)
+                
             all_known_files = list(found_files)
 
             partial_files = {}
@@ -451,6 +481,13 @@ def main():
                         progress.advance(task)
                     if stop_event.is_set(): return
                     
+                    if missing_files_warnings:
+                        file_context_buffer.append("\n--- SYSTEM NOTE: MISSING FILES ---")
+                        file_context_buffer.append("The following files were requested but could not be found or resolved in the workspace:")
+                        for mfw in missing_files_warnings:
+                            file_context_buffer.append(f"- {mfw}")
+                        file_context_buffer.append("Please check your paths and request them again if necessary.\n")
+                        
                     file_context_str = "\n".join(file_context_buffer)
                     full_text = ""
                     

@@ -3,7 +3,11 @@ import json
 import difflib
 import re
 import subprocess
+import hashlib
+import time
+import atexit
 from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 from rich.table import Table
 from rich import box
 from rich.rule import Rule
@@ -114,6 +118,110 @@ def extract_blocks(filepath: str, content: str) -> list[dict]:
 def extract_signatures(filepath: str, content: str) -> list[str]:
     """Uses block extraction to retrieve class and function definitions from source code."""
     blocks = extract_blocks(filepath, content)
+    return [b["name"] for b in blocks]
+
+# --- AST Caching System ---
+
+_ast_cache = {}
+_ast_cache_path = ""
+_ast_cache_dirty = False
+
+def init_ast_cache(root_dir: str) -> None:
+    global _ast_cache, _ast_cache_path
+    dir_path = os.path.expanduser("~/.configs/combineCopy")
+    try:
+        os.makedirs(dir_path, exist_ok=True)
+    except Exception:
+        pass
+    cwd_hash = hashlib.md5(os.path.abspath(root_dir).encode('utf-8')).hexdigest()
+    _ast_cache_path = os.path.join(dir_path, f"ast_cache_{cwd_hash}.json")
+    if os.path.exists(_ast_cache_path):
+        try:
+            with open(_ast_cache_path, 'r', encoding='utf-8') as f:
+                _ast_cache = json.load(f)
+        except Exception:
+            _ast_cache = {}
+
+def save_ast_cache() -> None:
+    global _ast_cache_dirty, _ast_cache_path
+    if _ast_cache_dirty and _ast_cache_path:
+        try:
+            with open(_ast_cache_path, 'w', encoding='utf-8') as f:
+                json.dump(_ast_cache, f)
+            _ast_cache_dirty = False
+        except Exception:
+            pass
+
+atexit.register(save_ast_cache)
+
+def prime_ast_cache(root_dir: str, files: list[str]) -> None:
+    global _ast_cache, _ast_cache_dirty
+    init_ast_cache(root_dir)
+    
+    new_or_mod_count = 0
+    loaded_count = 0
+    start_time = time.time()
+    
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        console=console
+    ) as progress:
+        task = progress.add_task("[cyan]Updating AST Cache...", total=len(files))
+        for f in files:
+            rel_path = os.path.relpath(f, root_dir).replace("\\", "/")
+            try:
+                mtime = os.path.getmtime(f)
+            except Exception:
+                mtime = 0
+                
+            cached = _ast_cache.get(rel_path)
+            if cached and cached.get("mtime") == mtime:
+                loaded_count += 1
+            else:
+                new_or_mod_count += 1
+                content = safe_read_file(f)
+                blocks = []
+                if content and not content.startswith("(This is a binary"):
+                    blocks = extract_blocks(f, content)
+                _ast_cache[rel_path] = {"mtime": mtime, "blocks": blocks}
+                _ast_cache_dirty = True
+                
+            progress.advance(task)
+            
+    save_ast_cache()
+    elapsed = time.time() - start_time
+    if new_or_mod_count > 0 or elapsed > 0.5:
+        console.print(f"[bold green]✓[/bold green] AST Cache Ready ({elapsed:.1f}s) — [cyan]{new_or_mod_count}[/cyan] parsed, [cyan]{loaded_count}[/cyan] loaded from cache.")
+
+def get_cached_blocks(filepath: str, root_dir: str) -> list[dict]:
+    global _ast_cache, _ast_cache_dirty
+    if not _ast_cache_path:
+        init_ast_cache(root_dir)
+        
+    rel_path = os.path.relpath(filepath, root_dir).replace("\\", "/")
+    try:
+        mtime = os.path.getmtime(filepath)
+    except Exception:
+        mtime = 0
+        
+    cached = _ast_cache.get(rel_path)
+    if cached and cached.get("mtime") == mtime:
+        return cached.get("blocks", [])
+        
+    content = safe_read_file(filepath)
+    blocks = []
+    if content and not content.startswith("(This is a binary"):
+        blocks = extract_blocks(filepath, content)
+    
+    _ast_cache[rel_path] = {"mtime": mtime, "blocks": blocks}
+    _ast_cache_dirty = True
+    return blocks
+
+def get_cached_signatures(filepath: str, root_dir: str) -> list[str]:
+    blocks = get_cached_blocks(filepath, root_dir)
     return [b["name"] for b in blocks]
 
 def is_binary_file(filepath: str) -> bool:
@@ -502,12 +610,10 @@ def generate_tree_string(files, root_dir) -> str:
             
     signatures_map = {}
     for f in files:
-        content = safe_read_file(f)
-        if content and not content.startswith("(This is a binary"):
-            sigs = extract_signatures(f, content)
-            if sigs:
-                rel_path = os.path.relpath(f, root_dir).replace("\\", "/")
-                signatures_map[rel_path] = sigs
+        sigs = get_cached_signatures(f, root_dir)
+        if sigs:
+            rel_path = os.path.relpath(f, root_dir).replace("\\", "/")
+            signatures_map[rel_path] = sigs
 
     lines = []
     def _build_lines(node, prefix="", path_prefix=""):
@@ -586,3 +692,40 @@ def display_summary(root_dir, max_depth, extensions, batch_count, total_files) -
     table.add_row("Batches", str(batch_count))
     table.add_row("Total Files Found", f"[bold green]{total_files}[/bold green]")
     console.print(table)
+
+def resolve_paths(requested_paths: set, known_files: list[str], root_dir: str) -> tuple[dict, dict, list]:
+    """Resolves requested paths using Exact, Suffix, and Basename matching."""
+    resolved = {}
+    ambiguous = {}
+    missing = []
+    
+    known_rel = [os.path.relpath(f, root_dir).replace("\\", "/") for f in known_files]
+    known_set = set(known_rel)
+    
+    for req in requested_paths:
+        req_clean = req.replace("\\", "/")
+        # 1. Exact Match
+        if req_clean in known_set:
+            resolved[req] = req_clean
+            continue
+            
+        # 2. Suffix Match
+        suffix_matches = [p for p in known_rel if p.endswith(req_clean)]
+        if len(suffix_matches) == 1:
+            resolved[req] = suffix_matches[0]
+            continue
+        elif len(suffix_matches) > 1:
+            ambiguous[req] = suffix_matches
+            continue
+            
+        # 3. Basename Match
+        base = os.path.basename(req_clean)
+        base_matches = [p for p in known_rel if os.path.basename(p) == base]
+        if len(base_matches) == 1:
+            resolved[req] = base_matches[0]
+        elif len(base_matches) > 1:
+            ambiguous[req] = base_matches
+        else:
+            missing.append(req)
+            
+    return resolved, ambiguous, missing
