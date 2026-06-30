@@ -6,11 +6,11 @@ import threading
 from flask import Flask, request, jsonify, render_template_string
 from rich.panel import Panel
 
-from cc_utils import (
+from combinecopy.utils import (
     get_files_recursive, safe_read_file, intelligent_json_fix, 
     generate_tree_string, console, print_auto_summary
 )
-from cc_prompts import build_prompt
+from combinecopy.prompts import build_prompt
 
 app = Flask(__name__)
 

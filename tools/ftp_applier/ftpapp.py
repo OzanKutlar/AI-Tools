@@ -9,6 +9,9 @@ import hashlib
 import io
 from ftplib import FTP, error_perm
 
+# Allow importing from the root combinecopy package
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, ScrollableContainer
 from textual.widgets import Input, Label, Button, RichLog, Static, ProgressBar, OptionList
@@ -721,7 +724,7 @@ def main():
             repo_root = os.getcwd()
 
         file_paths = [f["abs_path"] for f in files]
-        from tui_selection import run_file_selector
+        from combinecopy.tui.selection import run_file_selector
         selected = run_file_selector(repo_root, file_paths, ast_mode=False)
         
         if selected is None:

@@ -20,7 +20,7 @@ try:
 except ImportError:
     KEYBOARD_AVAILABLE = False
 
-from cc_utils import (
+from combinecopy.utils import (
     console,
     safe_read_file,
     get_files_recursive,
@@ -31,7 +31,7 @@ from cc_utils import (
     copy_file_to_clipboard
 )
 
-from cc_prompts import (
+from combinecopy.prompts import (
     get_system_prompt,
     build_prompt,
     get_user_prompt,
@@ -40,10 +40,10 @@ from cc_prompts import (
     get_system_prompt_important
 )
 
-from tui_selection import run_file_selector
-from tui_prompt import SystemPromptApp
-from tui_confirm import ConfirmCopyApp
-from tui_apply import AutoAgentApp, OrchestratorAgentApp
+from combinecopy.tui.selection import run_file_selector
+from combinecopy.tui.prompt import SystemPromptApp
+from combinecopy.tui.confirm import ConfirmCopyApp
+from combinecopy.tui.apply import AutoAgentApp, OrchestratorAgentApp
 
 def resolve_random_paths(paths: list[str]) -> list[str]:
     resolved = []
@@ -177,7 +177,7 @@ def main():
         ext_filters = normalized_exts
 
     if args.web:
-        from web_server import start_server
+        from combinecopy.web.server import start_server
         console.print("\n[bold green]Starting CombineCopy Web UI...[/bold green]")
         console.print("Access it in your browser at: [bold cyan]http://127.0.0.1:5000[/bold cyan]\n")
         start_server(root_dir, max_depth, ext_filters, args.exclude)
@@ -204,7 +204,7 @@ def main():
         if args.json_select:
             console.print("[bold cyan]Phase: Selection Parsing[/bold cyan]")
             import pyperclip
-            from cc_utils import extract_json_from_text, intelligent_json_fix, extract_xml_from_text, parse_xml_to_dict
+            from combinecopy.utils import extract_json_from_text, intelligent_json_fix, extract_xml_from_text, parse_xml_to_dict
             try:
                 clipboard_content = pyperclip.paste().strip()
             except Exception as e:
@@ -244,7 +244,7 @@ def main():
             important_files = []
             partial_files = {}
             
-            from cc_utils import prime_ast_cache, get_cached_blocks, resolve_paths
+            from combinecopy.utils import prime_ast_cache, get_cached_blocks, resolve_paths
 
             with console.status("[bold green]Scanning directory structure...[/bold green]", spinner="dots"):
                 scanned_files = get_files_recursive(root_dir, 0, max_depth, ext_filters, exclude_dirs=args.exclude)
@@ -262,7 +262,7 @@ def main():
             resolved_map, ambiguous_map, missing_list = resolve_paths(req_paths, scanned_files, root_dir)
             
             if ambiguous_map or missing_list:
-                from tui_resolve import ResolutionApp
+                from combinecopy.tui.resolve import ResolutionApp
                 app = ResolutionApp(ambiguous_map, missing_list)
                 user_resolved = app.run()
                 if user_resolved is None:
@@ -346,7 +346,7 @@ def main():
                     found_files = get_files_recursive(root_dir, 0, max_depth, ext_filters, exclude_dirs=args.exclude)
             
             if args.file_culling or args.select:
-                from cc_utils import prime_ast_cache
+                from combinecopy.utils import prime_ast_cache
                 prime_ast_cache(root_dir, found_files)
                 
             all_known_files = list(found_files)

@@ -25,7 +25,7 @@ from textual.widgets import Header, Footer, Label, ListView, ListItem, Button, S
 from textual.binding import Binding
 from textual.screen import ModalScreen
 
-from cc_utils import (
+from combinecopy.utils import (
     safe_read_file,
     intelligent_json_fix,
     render_word_diff,
@@ -50,8 +50,8 @@ def _write_text_preserving(path: str, text: str, original_newline: str | None = 
     with open(path, "w", encoding="utf-8", errors="surrogateescape", newline="") as f:
         f.write(text)
 
-from cc_prompts import build_prompt
-from vcs_tfs import tfs_checkout, tfs_add, tfs_delete, tfs_checkin
+from combinecopy.prompts import build_prompt
+from combinecopy.vcs_tfs import tfs_checkout, tfs_add, tfs_delete, tfs_checkin
 
 class CommandExecutionScreen(ModalScreen[bool]):
     CSS = """

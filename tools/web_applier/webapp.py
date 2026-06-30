@@ -23,7 +23,10 @@ try:
 except ImportError:
     PYCLIPBOARD_AVAILABLE = False
 
-from cc_utils import safe_read_file
+# Allow importing from the root combinecopy package
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
+from combinecopy.utils import safe_read_file
 
 # --- Git Utilities (Reused and adapted from ftpapp) ---
 

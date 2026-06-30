@@ -56,7 +56,7 @@ class SelectionTree(Tree):
         if hasattr(self.app, "action_toggle_ignore"):
             self.app.action_toggle_ignore()
 
-from cc_utils import get_cached_blocks
+from combinecopy.utils import get_cached_blocks
 
 def get_ignore_filepath(root_dir: str) -> str:
     dir_path = os.path.expanduser("~/.configs/combineCopy")
