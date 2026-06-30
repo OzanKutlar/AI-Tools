@@ -1238,7 +1238,7 @@ class AutoAgentApp(App):
                         if data.get("phase") == "EXECUTION" and "files" in data:
                             self.load_payload(data)
                             return
-                        elif data.get("phase") == "CONSULT" and getattr(self, 'consult_mode', False):
+                        elif data.get("phase") == "CONSULT":
                             self.load_consult_payload(data)
                             return
                             
@@ -1262,7 +1262,7 @@ class AutoAgentApp(App):
                                 self.notify("Intelligently auto-fixed JSON syntax errors!", title="Auto-Fix Success", severity="info")
                                 self.load_payload(fixed_data)
                                 return
-                            elif fixed_data.get("phase") == "CONSULT" and getattr(self, 'consult_mode', False):
+                            elif fixed_data.get("phase") == "CONSULT":
                                 self.load_consult_payload(fixed_data)
                                 return
                         if '"EXECUTION"' in json_str and '"phase"' in json_str:

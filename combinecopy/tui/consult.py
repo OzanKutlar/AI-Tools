@@ -51,13 +51,13 @@ class ConsultationScreen(ModalScreen[bool]):
                 with Vertical(id="consult-left"):
                     yield Label("[bold yellow]DLP Review: Verify Queries[/bold yellow]")
                     yield Static("Ensure no proprietary IP or company code is leaked in these questions before proceeding.", classes="dim")
-                    lv = ListView()
+                    list_items = []
                     for q in self.queries:
-                        lv.append(ListItem(Static(
+                        list_items.append(ListItem(Static(
                             f"[bold cyan]ID: {q.get('id', 'N/A')}[/bold cyan]\n"
                             f"{q.get('question', '')}"
                             , classes="query-card")))
-                    yield lv
+                    yield ListView(*list_items)
                 with Vertical(id="consult-right"):
                     yield Label("[bold green]Instructions[/bold green]")
                     yield Static(
