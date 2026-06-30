@@ -553,7 +553,7 @@ def build_external_consult_prompt(queries: list, xml_mode: bool = False) -> str:
             lines.append("    {")
             lines.append(f'      "id": "{q_id}",')
             lines.append('      "answer": "Your detailed answer here"')
-            lines.append(f"    }}{{comma}")
+            lines.append("    }" + comma)
         lines.append("  ]")
         lines.append("}")
         lines.append("```")
