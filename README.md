@@ -1,45 +1,30 @@
 # AI-Tools
 
-A repository of terminal user interface (TUI) utility tools that interact with AI models and local workspaces to assist with software development workflows.
+This repository provides a suite of command-line utilities designed to interface local development workspaces with Large Language Models (LLMs). The primary focus of the project is `combineCopy`, a comprehensive context assembly and automated execution agent. Secondary utilities are included to facilitate state-based deployments to restrictive environments.
 
 ## Installation
 
-This repository is configured as a Python package. You can install it locally to make the tools available globally on your command line.
+The repository is configured as a Python package. Installing it locally exposes the tools globally on your command line environment.
 
 ```bash
-# Clone the repository
 git clone https://github.com/OzanKutlar/AI-Tools
 cd AI-Tools
-
-# Install the tools globally
-pip install .
-
-# Or install in editable mode for active development
 pip install -e .
 ```
 
-Once installed, your system will have access to the following terminal commands: `combineCopy`, `ftpapp`, `webapp`, and `app` (which is a shortcut that automatically runs `combineCopy -a`).
+Once installed, the `combineCopy`, `ftpapp`, and `webapp` commands become available. The `app` command is also registered as an alias for `combineCopy -a`.
 
-## Overview of Tools
+## combineCopy: Context Assembly and Execution Agent
 
-This project consists of three primary Python-based utilities designed for AI-assisted development and remote deployments:
-1. **`combineCopy`**: A workspace context assembler, file selector, and automated clipboard-based AI execution agent.
-2. **`ftpapp`**: A Git-integrated FTP deployment tool to synchronize workspace changes to a remote hosting environment.
-3. **`webapp`**: A Git-integrated keyboard-emulation apply tool to automate transferring file changes to browser-based editors/IDEs.
+The `combineCopy` utility is designed to eliminate the manual overhead of moving code between local IDEs and LLM interfaces. It operates across two primary pipelines: context aggregation and automated execution.
 
----
+### Architecture and Methodology
 
-## 1. combineCopy (AI Workspace & Execution Agent)
+**Context Assembly Pipeline:** To generate coherent and mechanically accurate responses, LLMs require precise workspace context. `combineCopy` utilizes a recursive scanning algorithm to aggregate source code based on user-defined file extensions and exclusion parameters. To optimize the context window and prevent token exhaustion, the system employs an Abstract Syntax Tree (AST) mapping system (file culling). This provides the LLM with a structural overview of the codebase without injecting full file contents unless explicitly requested. The pipeline also natively extracts and parses `.zip` archives on the fly. 
 
-`combineCopy` is a terminal user interface and background worker utility that helps assemble local source code files for LLM prompt context, and executes code updates (file creations, search-and-replace modifications, deletions, and CLI commands) received back from the AI.
+**Automated Execution Pipeline:** Traditional LLM interactions require manual copying and pasting of generated code, which is prone to human error. To address this, `combineCopy` implements a background execution agent that monitors the system clipboard for structured JSON or XML payloads. Upon detecting a valid payload, the engine parses the requested actions—such as file creations, targeted search-and-replace modifications, regex operations, and terminal command executions. These operations are validated against the current local state before being applied. Intelligent JSON-fixing algorithms and error fallback mechanisms are utilized to mitigate model hallucinations and formatting failures.
 
-### Key Workflows and Features
-- **Context Assembly**: Recursively scans folders to collect source files, filtering by file extensions and respecting configured exclusion lists. You can target specific files, directories, or even pass a `.zip` archive which will be natively extracted and scanned on the fly.
-- **Interactive File Selector TUI**: Allows users to interactively pick files to include and toggle "full context" versus "AST map only" modes.
-- **Continuous AI Execution Agent**: Listens to the system clipboard for structured JSON (or XML) instructions representing file operations (Create, Modify, Delete, Command) and applies them locally with diff previews.
-- **Orchestration & Consultation**: Enables an orchestrator-level model to plan execution steps for downstream coding models, and allows agents to "consult" external air-gapped LLMs for complex logic.
-- **Multiple Environment Support**: Can interface natively with Git, TFVC/TFS (`--tfs`), or Web IDEs (`--web-apply`).
-- **Web UI Server**: Alternatively launch a local Flask-based browser UI for interacting with your workspace context.
+**Orchestration and Consultation:** For complex system generation tasks, the tool supports an orchestrator mode. This separates the planning phase from the execution phase, allowing a reasoning model to draft an architectural plan before passing exact specifications to a downstream coding model. Additionally, a consultation phase allows the active agent to query external, air-gapped LLMs to retrieve specific technical algorithms before resuming its local execution loop.
 
 ### Common Usage Examples
 
@@ -66,73 +51,45 @@ combineCopy --file-cull -s
 combineCopy -f gradle kt xml -s -a --system
 ```
 
-### Complete List of Arguments
+### Command-Line Arguments
 
 **Path Targets**
-- `paths`: Specific files, directories, or `.zip` archives to include (bypasses full directory scan).
+*   `paths`: Specific files, directories, or `.zip` archives to include. Bypasses the full directory scan if provided.
 
 **Filtering & Output Control**
-- `-l, --limit <int>`: Max recursion depth for scanning directories (default: 100).
-- `-f, --file_types <ext...>`: Space-separated file extensions to include (e.g., `-f py js html`).
-- `-e, --exclude <dir...>`: Space-separated directory names to exclude from the scan.
-- `-b, --batches <int>`: Number of batches to split large workspace context copies into (default: 1).
-- `--file-culling, --file-cull`: Enable file culling / AST (Abstract Syntax Tree) map generation mode.
+*   `-l, --limit <int>`: Maximum recursion depth for scanning directories (default: 100).
+*   `-f, --file_types <ext...>`: Space-separated file extensions to include (e.g., `-f py js html`).
+*   `-e, --exclude <dir...>`: Space-separated directory names to exclude from the scan.
+*   `-b, --batches <int>`: Number of batches to split large workspace context copies into (default: 1).
+*   `--file-culling, --file-cull`: Enable file culling and AST map generation mode.
 
 **Interactive & UI Modes**
-- `-s, --select`: Open the interactive TUI selector to manually pick files.
-- `--system`: Open a TUI to inject the system prompt and type your user instructions. Optionally provide a path to a custom system prompt file (e.g. `--system custom.txt`).
-- `--web`: Launch the local Web UI server on `127.0.0.1:5000`.
+*   `-s, --select`: Launch the interactive TUI selector to manually filter the context payload.
+*   `--system`: Launch a TUI to inject system prompts and user instructions. Accepts an optional path to a custom text file.
+*   `--web`: Launch the local Flask-based Web UI server on `127.0.0.1:5000`.
 
-**AI Agent & Execution Modes**
-- `-a, --auto`: Run in continuous AI listener mode (monitors clipboard for JSON/XML execution payloads).
-- `-r, --revert`: Run in continuous AI listener mode, but reverse all modifications.
-- `-o, --orchestrate`: Run in orchestrator mode to generate a precise execution plan and prompt.
-- `--cli`: Enable CLI Mode. Modifies the system prompt to allow the AI to output terminal commands.
-- `--consult`: Enable the CONSULT phase, allowing the AI to pause and ask abstract questions to an external Expert LLM.
-- `-x, --xml`: Instruct the AI to use XML tags for payloads instead of JSON to completely avoid quote escaping issues.
-- `-js, --json-select`: Parse a JSON/XML selection payload directly from the clipboard to automatically select files/functions (used during the EXPLORATION phase).
+**Agent & Execution Modes**
+*   `-a, --auto`: Run in continuous AI listener mode, monitoring the clipboard for execution payloads.
+*   `-r, --revert`: Run the continuous listener mode, but reverse all incoming modifications.
+*   `-o, --orchestrate`: Run in orchestrator mode to generate execution plans for downstream models.
+*   `--cli`: Enable CLI Mode, allowing the LLM to output terminal commands in its payload.
+*   `--consult`: Enable the consultation phase, permitting the AI to query external Expert LLMs.
+*   `-x, --xml`: Instruct the AI to output XML payloads instead of JSON, bypassing quote-escaping vulnerabilities.
+*   `-js, --json-select`: Parse a selection payload directly from the clipboard to automatically retrieve files/functions during the exploration phase.
 
 **Environment Integrations**
-- `--web-apply`: Enable web macro mode. Translates AI execution applies into simulated keyboard strokes (`keyboard` module required) for Web IDEs.
-- `--tfs`: Use TFVC (`tf.exe`) instead of `git` for checkout, add, delete, and checkin operations.
+*   `--web-apply`: Enable web macro mode. Translates AI execution payloads into simulated keyboard strokes for browser-based IDEs.
+*   `--tfs`: Use TFVC (`tf.exe`) instead of Git for file checkout, addition, deletion, and check-in operations.
 
 **Clipboard & File Outputs**
-- `--file`: Save the generated prompt to a temporary `.txt` file and copy the *file itself* to the clipboard (useful for attaching to web chats).
-- `--system-only`: Copy only the raw system prompt text to the clipboard and exit.
+*   `--file`: Save the generated prompt to a temporary `.txt` file and copy the file object to the clipboard.
+*   `--system-only`: Copy the raw system prompt text to the clipboard and exit.
 
 ---
 
-## 2. ftpapp (Git-to-FTP Sync & Deployment Tool)
+## Supplementary Deployment Utilities
 
-`ftpapp` is a deployment utility that automates the transfer of modified code to a remote hosting environment over FTP. Instead of manually copying files, it identifies exactly what changed by reading local Git history.
+While `combineCopy` focuses on code generation and workspace modification, `ftpapp` and `webapp` are supplementary utilities developed to bridge Git-tracked repositories with restrictive, non-standard deployment environments. 
 
-### Key Features
-- **Git Integration**: Analyzes modified, added, and deleted statuses between a baseline commit (or offset such as `HEAD~1`) and the current repository `HEAD`.
-- **Interactive TUI Setup**: Prompts for FTP host details, credentials, and presents a navigable list of recent Git commits to define the deployment delta.
-- **Background Transfer Engine**: Runs network transfers on a separate background thread to maintain UI responsiveness.
-- **Real-Time Progress & Logs**: Displays individual file queue progress, network speed, total transferred size, and the live FTP protocol log dialogue stream.
-- **Automatic Remote Directories**: Detects and creates nested directory paths on the target FTP server dynamically during upload.
-
-### Common Options
-- `-f, --ftp`: Target FTP connection host and port (e.g., `192.168.1.1:21`).
-- `-u, --username`: FTP credentials login user.
-- `-p, --password`: FTP credentials login password.
-- `-c, --commit`: Commit hash or revision baseline to run diff against.
-- `-r, --repo-loc`: Target root directory on the remote server (e.g., `/httpdocs/`).
-- `--force`: Force changes by skipping remote state verification.
-
----
-
-## 3. webapp (Git-to-Web Apply & Keyboard Macro Emulation)
-
-`webapp` is an apply utility designed to automate uploading workspace updates directly into browser-based text editors or IDEs. Instead of copy-pasting code by hand, it uses keyboard macros to select all text and overwrite the contents with your local changes.
-
-### Key Features
-- **Git-Integrated Delta Detection**: Identifies modifications, additions, and deletions relative to a selected baseline commit hash or git reference.
-- **Keyboard-Emulated Apply Sequence**: Uses system-level hooks via the `keyboard` module to capture a global hotkey (e.g., `+`). When triggered, it copies the active file's code to the clipboard, clears the active input (`Ctrl+A`), and pastes (`Ctrl+V`).
-- **Auto-Advancing Status Queue**: Tracks active file transfers and progresses to the next file sequentially inside the interactive TUI environment.
-- **Manual Action Override**: Offers keyboard options inside the TUI to skip (`s`), force-complete (`f`), or go back (`p`) to the previous item in the queue.
-
-### Common Options
-- `-c, --commit`: Git commit hash or reference to diff against.
-- `-k, --hotkey`: Custom trigger sequence (defaults to `+` / Numpad Plus).
+*   **`ftpapp`**: Designed for FTP-only environments, this tool calculates state changes by evaluating Git diffs between the current `HEAD` and a selected baseline commit. It synchronizes these modifications to the remote server using a background thread, preventing UI blocking while generating the required remote directory structures on the fly.
+*   **`webapp`**: Designed for environments restricted to browser-based text editors where direct file uploads are unavailable. It identifies modifications via Git diffs and employs system-level OS hooks (via the `keyboard` module) to simulate deterministic overwrite macros, automating the transfer of local changes into the web interface.
