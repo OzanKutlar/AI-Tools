@@ -524,21 +524,40 @@ def get_file_cull(xml_mode: bool = False) -> str:
 def get_consult(xml_mode: bool = False) -> str:
     return CONSULT_XML if xml_mode else CONSULT_DEFAULT
 
-def build_external_consult_prompt(queries: list) -> str:
+def build_external_consult_prompt(queries: list, xml_mode: bool = False) -> str:
     lines = [
         "You are an Expert System Architect. I am an AI agent working in a secure environment. I need you to answer the following technical queries to help me build my implementation plan.",
         "",
         "RULES:",
         "1. Provide highly detailed pseudo-code, algorithms, and explanations.",
         "2. Do NOT write full file implementations; focus on the core logic and design patterns.",
-        "3. You MUST format your response strictly using the XML tags below. Do NOT include markdown blocks around the XML.",
-        "",
-        "<consultation_results>"
     ]
-    for q in queries:
-        q_id = q.get("id", "")
-        lines.append(f'  <answer id="{q_id}">Your detailed answer here</answer>')
-    lines.append("</consultation_results>")
+    
+    if xml_mode:
+        lines.append("3. You MUST format your response strictly using the XML tags below. Do NOT include markdown blocks around the XML.")
+        lines.append("")
+        lines.append("<consultation_results>")
+        for q in queries:
+            q_id = q.get("id", "")
+            lines.append(f'  <answer id="{q_id}">Your detailed answer here</answer>')
+        lines.append("</consultation_results>")
+    else:
+        lines.append("3. You MUST format your response strictly using the JSON format below. Output it in a markdown code block (```json).")
+        lines.append("")
+        lines.append("```json")
+        lines.append("{")
+        lines.append('  "answers": [')
+        for i, q in enumerate(queries):
+            q_id = q.get("id", "")
+            comma = "," if i < len(queries) - 1 else ""
+            lines.append("    {")
+            lines.append(f'      "id": "{q_id}",')
+            lines.append('      "answer": "Your detailed answer here"')
+            lines.append(f"    }}{{comma}")
+        lines.append("  ]")
+        lines.append("}")
+        lines.append("```")
+
     lines.append("")
     lines.append("--- QUERIES ---")
     for q in queries:

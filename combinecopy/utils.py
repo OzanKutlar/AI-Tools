@@ -743,6 +743,21 @@ def resolve_paths(requested_paths: set, known_files: list[str], root_dir: str) -
 
 def extract_consult_answers(text: str) -> dict | None:
     """Extracts external LLM consultation results from clipboard text."""
+    # Try JSON first
+    json_blocks = extract_json_from_text(text)
+    for j_str in json_blocks:
+        data, _ = intelligent_json_fix(j_str)
+        if data and isinstance(data, dict) and "answers" in data:
+            answers = {}
+            for item in data["answers"]:
+                if isinstance(item, dict) and "id" in item and "answer" in item:
+                    val = str(item["answer"]).strip()
+                    if val and val != "Your detailed answer here":
+                        answers[item["id"]] = val
+            if answers:
+                return answers
+
+    # Fallback to XML
     if "<consultation_results>" not in text:
         return None
     m = re.search(r'<consultation_results>(.*?)</consultation_results>', text, re.DOTALL | re.IGNORECASE)

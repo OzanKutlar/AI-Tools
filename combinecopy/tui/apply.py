@@ -1277,7 +1277,7 @@ class AutoAgentApp(App):
         from combinecopy.tui.consult import ConsultationScreen
         self.is_consulting = True
         self.query_one("#status-label", Label).update("[bold cyan]Consultation Phase Active[/bold cyan]")
-        self.app.push_screen(ConsultationScreen(data), self.on_consult_cancelled)
+        self.app.push_screen(ConsultationScreen(data, self.xml_mode), self.on_consult_cancelled)
         
     def on_consult_cancelled(self, cancelled: bool | None) -> None:
         if cancelled:

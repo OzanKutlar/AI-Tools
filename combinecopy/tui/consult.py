@@ -43,10 +43,11 @@ class ConsultationScreen(ModalScreen[bool]):
     }
     """
     
-    def __init__(self, data: dict):
+    def __init__(self, data: dict, xml_mode: bool = False):
         super().__init__()
         self.data = data
         self.queries = data.get("queries", [])
+        self.xml_mode = xml_mode
         
     def compose(self) -> ComposeResult:
         with Vertical(id="consult-dialog"):
@@ -72,13 +73,14 @@ class ConsultationScreen(ModalScreen[bool]):
                 yield Button("Cancel Consult", id="btn-cancel", variant="error")
                 
     def _get_instructions(self) -> str:
+        format_name = "XML" if self.xml_mode else "JSON"
         return (
             "### Instructions\n"
             "1. Click **Verify & Copy Prompt** below.\n"
             "2. Paste the prompt into your external LLM (ChatGPT/Claude).\n"
-            "3. Wait for the external AI to generate the XML answers.\n"
+            f"3. Wait for the external AI to generate the {format_name} answers.\n"
             "4. Copy the external AI's response to your clipboard.\n\n"
-            "*This screen will automatically close when it detects valid `<consultation_results>` on your clipboard.*\n\n"
+            f"*This screen will automatically close when it detects valid `{format_name}` on your clipboard.*\n\n"
             "---\n"
             "**Select a query on the left to view its full contents here.**"
         )
@@ -93,7 +95,7 @@ class ConsultationScreen(ModalScreen[bool]):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-copy":
-            prompt = build_external_consult_prompt(self.queries)
+            prompt = build_external_consult_prompt(self.queries, self.xml_mode)
             if copy_to_clipboard(prompt):
                 self.app.notify("External prompt copied! Awaiting response...", title="Copied")
         elif event.button.id == "btn-cancel":
