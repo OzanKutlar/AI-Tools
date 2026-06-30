@@ -18,6 +18,10 @@ Once installed, you can use the `combineCopy`, `ftpapp`, and `webapp` commands. 
 
 `combineCopy` is designed to eliminate the manual overhead of moving code between your IDE and an AI. It handles two main jobs: gathering context and executing code.
 
+Originally created to help developers easily select and place files into context for AI tools, `combineCopy` solves a major limitation of web-based AI platforms. Many of these platforms treat uploaded documents as compressed knowledgebases and cannot process the entirety of the document at once. `combineCopy` bypasses this by allowing you to directly post complete files into the chat box, ensuring the LLM sees all the files and keeps them fully in context.
+
+As development needs increased, the tool evolved. It began appending automatic system prompts to the end of copied files, packaging the user prompt together with it. Eventually, capabilities were added allowing the tool to request files on its own and make other agent calls, slowly transforming `combineCopy` into a full agentic harness.
+
 ### Context Assembly
 
 LLMs need precise context to write good code. `combineCopy` gets it for them.
@@ -30,13 +34,17 @@ To keep your token counts low, it uses file culling. It builds an Abstract Synta
 
 Manual copy-pasting is slow and prone to errors. The execution agent fixes this.
 
+Instead of letting the AI output the entire file, which eats up precious output tokens and slows down generation, we make the AI execute targeted search-and-replace modifications inside the files. This allows the LLM to efficiently fix problems on its own.
+
 It monitors your clipboard in the background. When it catches a valid JSON or XML instruction payload, it goes to work.
 
 It creates files, modifies code using targeted search-and-replace, and executes CLI commands. You see the diffs on your screen before anything becomes permanent.
 
-### Orchestration and Consultation
+### Orchestration (Experimental)
 
-Need a massive refactor? Run the orchestrator mode. A reasoning model builds the architectural plan, and downstream models write the actual code.
+Need a massive refactor? Run the orchestrator mode. A reasoning model builds the architectural plan, and downstream models write the actual code. Note that this orchestration mode is currently experimental.
+
+### External LLM Consult
 
 If the AI gets stuck on a complex problem, it can trigger a consultation phase. It pauses, queries an external expert model, and brings the answers back into your local loop.
 
