@@ -749,10 +749,14 @@ def extract_consult_answers(text: str) -> dict | None:
     if not m:
         return None
     answers = {}
-    # Standard strict format
-    for ans in re.findall(r'<answer\s+id="(.*?)">(.*?)</answer>', m.group(1), re.DOTALL | re.IGNORECASE):
-        answers[ans[0]] = ans[1].strip()
-    # Fallback for LLMs that use single quotes or no quotes
-    for ans in re.findall(r'<answer\s+id=(?:\"|\'|)(.*?)(?:\"|\'|)>\s*(.*?)</answer>', m.group(1), re.DOTALL | re.IGNORECASE):
-        if ans[0] not in answers: answers[ans[0]] = ans[1].strip()
-    return answers if answers else None
+        # Standard strict format
+        for ans in re.findall(r'<answer\s+id="(.*?)">(.*?)</answer>', m.group(1), re.DOTALL | re.IGNORECASE):
+            val = ans[1].strip()
+            if val and val != "Your detailed answer here":
+                answers[ans[0]] = val
+        # Fallback for LLMs that use single quotes or no quotes
+        for ans in re.findall(r'<answer\s+id=(?:\"|\'|)(.*?)(?:\"|\'|)>\s*(.*?)</answer>', m.group(1), re.DOTALL | re.IGNORECASE):
+            val = ans[1].strip()
+            if ans[0] not in answers and val and val != "Your detailed answer here":
+                answers[ans[0]] = val
+        return answers if answers else None
