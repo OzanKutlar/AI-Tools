@@ -1,10 +1,10 @@
 # AI-Tools
 
-This repository provides a suite of command-line utilities designed to interface local development workspaces with Large Language Models (LLMs). The primary focus of the project is `combineCopy`, a comprehensive context assembly and automated execution agent. Secondary utilities are included to facilitate state-based deployments to restrictive environments.
+This repository provides a suite of command-line utilities. They bridge the gap between your local development workspace and Large Language Models (LLMs).
 
 ## Installation
 
-The repository is configured as a Python package. Installing it locally exposes the tools globally on your command line environment.
+This repository is configured as a Python package. Install it locally to expose the tools globally on your command line.
 
 ```bash
 git clone https://github.com/OzanKutlar/AI-Tools
@@ -12,19 +12,33 @@ cd AI-Tools
 pip install -e .
 ```
 
-Once installed, the `combineCopy`, `ftpapp`, and `webapp` commands become available. The `app` command is also registered as an alias for `combineCopy -a`.
+Once installed, you can use the `combineCopy`, `ftpapp`, and `webapp` commands. You also get the `app` shortcut, which automatically runs `combineCopy -a`.
 
 ## combineCopy: Context Assembly and Execution Agent
 
-The `combineCopy` utility is designed to eliminate the manual overhead of moving code between local IDEs and LLM interfaces. It operates across two primary pipelines: context aggregation and automated execution.
+`combineCopy` is designed to eliminate the manual overhead of moving code between your IDE and an AI. It handles two main jobs: gathering context and executing code.
 
-### Architecture and Methodology
+### Context Assembly
 
-**Context Assembly Pipeline:** To generate coherent and mechanically accurate responses, LLMs require precise workspace context. `combineCopy` utilizes a recursive scanning algorithm to aggregate source code based on user-defined file extensions and exclusion parameters. To optimize the context window and prevent token exhaustion, the system employs an Abstract Syntax Tree (AST) mapping system (file culling). This provides the LLM with a structural overview of the codebase without injecting full file contents unless explicitly requested. The pipeline also natively extracts and parses `.zip` archives on the fly. 
+LLMs need precise context to write good code. `combineCopy` gets it for them.
 
-**Automated Execution Pipeline:** Traditional LLM interactions require manual copying and pasting of generated code, which is prone to human error. To address this, `combineCopy` implements a background execution agent that monitors the system clipboard for structured JSON or XML payloads. Upon detecting a valid payload, the engine parses the requested actions—such as file creations, targeted search-and-replace modifications, regex operations, and terminal command executions. These operations are validated against the current local state before being applied. Intelligent JSON-fixing algorithms and error fallback mechanisms are utilized to mitigate model hallucinations and formatting failures.
+It scans your workspace, filters extensions, and drops excluded directories. It even unpacks `.zip` archives on the fly.
 
-**Orchestration and Consultation:** For complex system generation tasks, the tool supports an orchestrator mode. This separates the planning phase from the execution phase, allowing a reasoning model to draft an architectural plan before passing exact specifications to a downstream coding model. Additionally, a consultation phase allows the active agent to query external, air-gapped LLMs to retrieve specific technical algorithms before resuming its local execution loop.
+To keep your token counts low, it uses file culling. It builds an Abstract Syntax Tree (AST) map of your project. The AI gets the blueprint of your codebase without having to read every single line of code.
+
+### Automated Execution
+
+Manual copy-pasting is slow and prone to errors. The execution agent fixes this.
+
+It monitors your clipboard in the background. When it catches a valid JSON or XML instruction payload, it goes to work.
+
+It creates files, modifies code using targeted search-and-replace, and executes CLI commands. You see the diffs on your screen before anything becomes permanent.
+
+### Orchestration and Consultation
+
+Need a massive refactor? Run the orchestrator mode. A reasoning model builds the architectural plan, and downstream models write the actual code.
+
+If the AI gets stuck on a complex problem, it can trigger a consultation phase. It pauses, queries an external expert model, and brings the answers back into your local loop.
 
 ### Common Usage Examples
 
@@ -89,7 +103,7 @@ combineCopy -f gradle kt xml -s -a --system
 
 ## Supplementary Deployment Utilities
 
-While `combineCopy` focuses on code generation and workspace modification, `ftpapp` and `webapp` are supplementary utilities developed to bridge Git-tracked repositories with restrictive, non-standard deployment environments. 
+Sometimes you have to deploy code without Git. These secondary tools handle restrictive environments.
 
-*   **`ftpapp`**: Designed for FTP-only environments, this tool calculates state changes by evaluating Git diffs between the current `HEAD` and a selected baseline commit. It synchronizes these modifications to the remote server using a background thread, preventing UI blocking while generating the required remote directory structures on the fly.
-*   **`webapp`**: Designed for environments restricted to browser-based text editors where direct file uploads are unavailable. It identifies modifications via Git diffs and employs system-level OS hooks (via the `keyboard` module) to simulate deterministic overwrite macros, automating the transfer of local changes into the web interface.
+*   **`ftpapp`**: Syncs your workspace to FTP servers. It reads your Git history, finds exactly what changed since your last commit, and transfers only those files. It runs in the background so your terminal stays responsive.
+*   **`webapp`**: Built for browser-based IDEs where direct uploads fail. It reads your Git diffs, hooks into your OS keyboard, and physically macros the file updates into the browser for you.
