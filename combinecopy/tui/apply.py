@@ -34,7 +34,8 @@ from combinecopy.utils import (
     detect_newline,
     extract_json_from_text,
     extract_xml_from_text,
-    parse_xml_to_dict
+    parse_xml_to_dict,
+    extract_consult_answers
 )
 
 def _write_text_preserving(path: str, text: str, original_newline: str | None = None) -> None:
@@ -1148,7 +1149,7 @@ class AutoAgentApp(App):
     ]
     TITLE = "CombineCopy — Auto Agent Listener"
 
-    def __init__(self, root_dir: str, known_files: list[str] | None = None, revert_mode: bool = False, ignore_initial_clipboard: bool = False, web_mode: bool = False, tfs_mode: bool = False, xml_mode: bool = False):
+    def __init__(self, root_dir: str, known_files: list[str] | None = None, revert_mode: bool = False, ignore_initial_clipboard: bool = False, web_mode: bool = False, tfs_mode: bool = False, xml_mode: bool = False, consult_mode: bool = False):
         super().__init__()
         self.root_dir = root_dir
         self.known_files = known_files or []
@@ -1156,6 +1157,8 @@ class AutoAgentApp(App):
         self.web_mode = web_mode
         self.tfs_mode = tfs_mode
         self.xml_mode = xml_mode
+        self.consult_mode = consult_mode
+        self.is_consulting = False
         self.ignore_initial_clipboard = ignore_initial_clipboard
         self.last_clipboard = ""
         self.payload = None
@@ -1213,6 +1216,17 @@ class AutoAgentApp(App):
             content = pyperclip.paste().strip()
             if not content or content == self.last_clipboard:
                 return
+                
+            # Check for consult results FIRST if we are consulting
+            if getattr(self, 'is_consulting', False):
+                answers = extract_consult_answers(content)
+                if answers:
+                    self.last_clipboard = content
+                    self.app.pop_screen()
+                    self.is_consulting = False
+                    self._finish_consultation(answers)
+                    return
+                    
             self.last_clipboard = content
             
             # Check XML first
@@ -1220,25 +1234,37 @@ class AutoAgentApp(App):
                 xml_blocks = extract_xml_from_text(content)
                 for xml_str in xml_blocks:
                     data = parse_xml_to_dict(xml_str)
-                    if data and data.get("phase") == "EXECUTION" and "files" in data:
-                        self.load_payload(data)
-                        return
-                        
+                    if data:
+                        if data.get("phase") == "EXECUTION" and "files" in data:
+                            self.load_payload(data)
+                            return
+                        elif data.get("phase") == "CONSULT" and getattr(self, 'consult_mode', False):
+                            self.load_consult_payload(data)
+                            return
+                            
             # Fallback to JSON
-            if '"phase":' in content and '"EXECUTION"' in content:
+            if '"phase":' in content and ('"EXECUTION"' in content or '"CONSULT"' in content):
                 json_blocks = extract_json_from_text(content)
                 for json_str in json_blocks:
                     try:
                         data = json.loads(json_str)
-                        if isinstance(data, dict) and data.get("phase") == "EXECUTION" and "files" in data:
-                            self.load_payload(data)
-                            return
+                        if isinstance(data, dict):
+                            if data.get("phase") == "EXECUTION" and "files" in data:
+                                self.load_payload(data)
+                                return
+                            elif data.get("phase") == "CONSULT" and getattr(self, 'consult_mode', False):
+                                self.load_consult_payload(data)
+                                return
                     except json.JSONDecodeError as e:
                         fixed_data, fixed_str = intelligent_json_fix(json_str)
-                        if fixed_data and isinstance(fixed_data, dict) and fixed_data.get("phase") == "EXECUTION" and "files" in fixed_data:
-                            self.notify("Intelligently auto-fixed JSON syntax errors!", title="Auto-Fix Success", severity="info")
-                            self.load_payload(fixed_data)
-                            return
+                        if fixed_data and isinstance(fixed_data, dict):
+                            if fixed_data.get("phase") == "EXECUTION" and "files" in fixed_data:
+                                self.notify("Intelligently auto-fixed JSON syntax errors!", title="Auto-Fix Success", severity="info")
+                                self.load_payload(fixed_data)
+                                return
+                            elif fixed_data.get("phase") == "CONSULT" and getattr(self, 'consult_mode', False):
+                                self.load_consult_payload(fixed_data)
+                                return
                         if '"EXECUTION"' in json_str and '"phase"' in json_str:
                             self.show_json_error(e, json_str)
                             return
@@ -1246,6 +1272,30 @@ class AutoAgentApp(App):
                         continue
         except Exception:
             pass
+
+    def load_consult_payload(self, data: dict) -> None:
+        from combinecopy.tui.consult import ConsultationScreen
+        self.is_consulting = True
+        self.query_one("#status-label", Label).update("[bold cyan]Consultation Phase Active[/bold cyan]")
+        self.app.push_screen(ConsultationScreen(data), self.on_consult_cancelled)
+        
+    def on_consult_cancelled(self, cancelled: bool | None) -> None:
+        if cancelled:
+            self.is_consulting = False
+            self.query_one("#status-label", Label).update("Waiting for AI...")
+            
+    def _finish_consultation(self, answers: dict) -> None:
+        buffer = ["--- RESEARCH RESULTS ---", "Here is the external knowledge you requested. Use this to formulate your PLANNING and EXECUTION.\n"]
+        for q_id, ans in answers.items():
+            buffer.append(f"=====\nQuery ID: {q_id}\n=====\n{ans}\n")
+        buffer.append("\n--- SYSTEM REMINDER ---")
+        buffer.append("You have completed the CONSULT phase. Please enter PLANNING mode or EXECUTION mode to proceed.")
+        
+        final_text = "\n".join(buffer)
+        if copy_to_clipboard(final_text):
+            self.notify("Consultation results formatted and copied to clipboard!", title="Success")
+        self.query_one("#status-label", Label).update("Waiting for AI...")
+        self.query_one("#ai-markdown", Markdown).update("**Consultation Complete!**\n\nThe external answers have been copied to your clipboard. Paste them back to the local AI.")
 
     def _normalize_text(self, text: str) -> str:
         return "\n".join(
@@ -2113,7 +2163,7 @@ class AutoAgentApp(App):
         else:
             self.exit(None)
 
-def run_auto_agent(root_dir: str, known_files: list[str] | None = None, revert_mode: bool = False, ignore_initial_clipboard: bool = False, web_mode: bool = False, xml_mode: bool = False):
+def run_auto_agent(root_dir: str, known_files: list[str] | None = None, revert_mode: bool = False, ignore_initial_clipboard: bool = False, web_mode: bool = False, xml_mode: bool = False, consult_mode: bool = False):
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -2132,7 +2182,8 @@ def run_auto_agent(root_dir: str, known_files: list[str] | None = None, revert_m
                 "revert_mode": revert_mode,
                 "ignore_initial_clipboard": ignore_initial_clipboard,
                 "web_mode": web_mode,
-                "xml_mode": xml_mode
+                "xml_mode": xml_mode,
+                "consult_mode": consult_mode
             }
             with open(in_name, "w", encoding="utf-8") as f:
                 json.dump(args_dict, f)
@@ -2154,7 +2205,7 @@ def run_auto_agent(root_dir: str, known_files: list[str] | None = None, revert_m
                 except Exception:
                     pass
     else:
-        app = AutoAgentApp(root_dir, known_files, revert_mode, ignore_initial_clipboard, web_mode, xml_mode=xml_mode)
+        app = AutoAgentApp(root_dir, known_files, revert_mode, ignore_initial_clipboard, web_mode, xml_mode=xml_mode, consult_mode=consult_mode)
         return app.run()
 
 if __name__ == "__main__":
@@ -2171,7 +2222,8 @@ if __name__ == "__main__":
             revert_mode=args_dict.get("revert_mode", False),
             ignore_initial_clipboard=args_dict.get("ignore_initial_clipboard", False),
             web_mode=args_dict.get("web_mode", False),
-            xml_mode=args_dict.get("xml_mode", False)
+            xml_mode=args_dict.get("xml_mode", False),
+            consult_mode=args_dict.get("consult_mode", False)
         )
         res = app.run()
         

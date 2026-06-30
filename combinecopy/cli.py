@@ -97,11 +97,12 @@ def main():
     parser.add_argument("--file-culling", "--file-cull", action="store_true", dest="file_culling", help="Enable file culling / AST selection mode")
     parser.add_argument("-js", "--json-select", action="store_true", help="Parse a JSON selection payload from clipboard to automatically select files/functions")
     parser.add_argument("-x", "--xml", action="store_true", help="Instruct the AI to use XML for payloads instead of JSON to completely avoid quote escaping issues.")
+    parser.add_argument("--consult", action="store_true", help="Enable CONSULT phase for the AI to ask abstract questions to an external LLM.")
     args = parser.parse_args()
 
     if args.system_only:
         agent_type = "orchestrator" if args.orchestrate else "cli" if args.cli else "default"
-        sys_prompt = get_system_prompt(agent_type=agent_type, file_cull=args.file_culling, xml_mode=args.xml)
+        sys_prompt = get_system_prompt(agent_type=agent_type, file_cull=args.file_culling, xml_mode=args.xml, consult=args.consult)
         important = get_system_prompt_important(agent_type=agent_type, xml_mode=args.xml)
         
         full_sys_prompt = f"--- SYSTEM INSTRUCTIONS ---\n{sys_prompt}\n\n{important}"
@@ -164,7 +165,7 @@ def main():
                 console.print(Panel("Orchestrator payload successfully copied to clipboard.", title="Success", style="bold green"))
             return
         else:
-            app = AutoAgentApp(root_dir, revert_mode=args.revert, web_mode=args.web, tfs_mode=args.tfs, xml_mode=args.xml)
+            app = AutoAgentApp(root_dir, revert_mode=args.revert, web_mode=args.web, tfs_mode=args.tfs, xml_mode=args.xml, consult_mode=args.consult)
             result = app.run()
             if result:
                 print_auto_summary(result)
@@ -391,7 +392,7 @@ def main():
             console.print("[bold cyan]Phase: Instruction & System Prompt[/bold cyan]")
             sys_arg = args.system if args.system else 'DEFAULT'
             if sys_arg == 'DEFAULT' or sys_arg == '':
-                sys_prompt_text = get_system_prompt(agent_type=agent_type, file_cull=args.file_culling, xml_mode=args.xml)
+                sys_prompt_text = get_system_prompt(agent_type=agent_type, file_cull=args.file_culling, xml_mode=args.xml, consult=args.consult)
             else:
                 try:
                     with open(sys_arg, 'r', encoding='utf-8') as f:
@@ -504,7 +505,8 @@ def main():
                                 file_cull=args.file_culling,
                                 system_prompt=user_request_data["system"],
                                 agent_type=agent_type,
-                                xml_mode=args.xml
+                                xml_mode=args.xml,
+                                consult=args.consult
                             )
                         else:
                             full_text = file_context_str
@@ -582,7 +584,7 @@ def main():
             if args.web_apply:
                 phase_name += " [WEB MACRO MODE]"
             console.print(f"\n[bold cyan]Phase: {phase_name}[/bold cyan]")
-            app = AutoAgentApp(root_dir, all_known_files, revert_mode=args.revert, ignore_initial_clipboard=True, web_mode=args.web_apply, tfs_mode=args.tfs, xml_mode=args.xml)
+            app = AutoAgentApp(root_dir, all_known_files, revert_mode=args.revert, ignore_initial_clipboard=True, web_mode=args.web_apply, tfs_mode=args.tfs, xml_mode=args.xml, consult_mode=args.consult)
             result = app.run()
             if result:
                 print_auto_summary(result)

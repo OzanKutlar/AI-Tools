@@ -357,6 +357,36 @@ Output the payload wrapped in a markdown code block:
 The user's tool will automatically parse this and copy the requested context into your clipboard.
 </file_culling_instructions>"""
 
+CONSULT_DEFAULT = r"""CONSULT: If you encounter a complex algorithm, unknown API, or syntax where you are unsure of the optimal approach, you can pause your work and consult an external Expert AI.
+Output your request strictly in pure JSON format:
+```json
+{
+  "phase": "CONSULT",
+  "queries": [
+    {
+      "id": "Q1",
+      "question": "What is the most memory-efficient way to iterate over a highly nested JSON structure in C#?"
+    }
+  ]
+}
+```
+**CRITICAL DATA LEAKAGE RULE:** You MUST abstract away all proprietary company names, internal URLs, and specific variable names (e.g., replace `SuperSecretBillingAPI` with `GenericAPI`). Do NOT leak internal IP. Act as if you are asking a question on a public programming forum."""
+
+CONSULT_XML = r"""CONSULT: If you encounter a complex algorithm, unknown API, or syntax where you are unsure of the optimal approach, you can pause your work and consult an external Expert AI.
+Output your request strictly in pure XML format:
+```xml
+<antigravity_payload>
+  <phase>CONSULT</phase>
+  <queries>
+    <query>
+      <id>Q1</id>
+      <question>What is the most memory-efficient way to iterate over a highly nested JSON structure in C#?</question>
+    </query>
+  </queries>
+</antigravity_payload>
+```
+**CRITICAL DATA LEAKAGE RULE:** You MUST abstract away all proprietary company names, internal URLs, and specific variable names (e.g., replace `SuperSecretBillingAPI` with `GenericAPI`). Do NOT leak internal IP. Act as if you are asking a question on a public programming forum."""
+
 REST_DEFAULT = r"""<task_checklist_guideline>
 **Purpose**: A detailed checklist to organize your work. Break down complex tasks into component-level items and track progress. Present this checklist directly in the chat. Do NOT treat it as a file (do not use paths like C:\Users\Ozan\task.md).
 **Format**:
@@ -491,8 +521,36 @@ def get_planning(agent_type: str = "default") -> str:
 def get_file_cull(xml_mode: bool = False) -> str:
     return FILE_CULLING_XML if xml_mode else FILE_CULLING
 
-def get_execution(agent_type: str = "default", xml_mode: bool = False) -> str:
+def get_consult(xml_mode: bool = False) -> str:
+    return CONSULT_XML if xml_mode else CONSULT_DEFAULT
+
+def build_external_consult_prompt(queries: list) -> str:
+    lines = [
+        "You are an Expert System Architect. I am an AI agent working in a secure environment. I need you to answer the following technical queries to help me build my implementation plan.",
+        "",
+        "RULES:",
+        "1. Provide highly detailed pseudo-code, algorithms, and explanations.",
+        "2. Do NOT write full file implementations; focus on the core logic and design patterns.",
+        "3. You MUST format your response strictly using the XML tags below. Do NOT include markdown blocks around the XML.",
+        "",
+        "<consultation_results>"
+    ]
+    for q in queries:
+        q_id = q.get("id", "")
+        lines.append(f'  <answer id="{q_id}">Your detailed answer here</answer>')
+    lines.append("</consultation_results>")
+    lines.append("")
+    lines.append("--- QUERIES ---")
+    for q in queries:
+        q_id = q.get("id", "")
+        q_text = q.get("question", "")
+        lines.append(f"[ID: {q_id}] {q_text}")
+    return "\n".join(lines)
+
+def get_execution(agent_type: str = "default", xml_mode: bool = False, consult: bool = False) -> str:
     parts = [MODE_DESCRIPTIONS_HEADER]
+    if consult:
+        parts.append(get_consult(xml_mode))
     if agent_type == "orchestrator":
         parts.append(EXPLORATION_ORCHESTRATOR_XML if xml_mode else EXPLORATION_ORCHESTRATOR)
         parts.append(PLANNING_ORCHESTRATOR)
@@ -547,10 +605,10 @@ def get_system_prompt_important(agent_type: str = "default", xml_mode: bool = Fa
 
 # --- Composition Functions ---
 
-def get_system_prompt(agent_type: str = "default", file_cull: bool = False, xml_mode: bool = False) -> str:
+def get_system_prompt(agent_type: str = "default", file_cull: bool = False, xml_mode: bool = False, consult: bool = False) -> str:
     parts = []
     parts.append(get_introduction(agent_type))
-    parts.append(get_execution(agent_type, xml_mode))  # get_execution already includes planning strings internally
+    parts.append(get_execution(agent_type, xml_mode, consult))  # get_execution already includes planning strings internally
     
     if file_cull:
         parts.append(get_file_cull(xml_mode))
@@ -568,7 +626,8 @@ def build_prompt(
     file_cull: bool = False,
     system_prompt: str = "",
     agent_type: str = "default",
-    xml_mode: bool = False
+    xml_mode: bool = False,
+    consult: bool = False
 ) -> str:
     parts = []
     
@@ -587,7 +646,7 @@ def build_prompt(
     if system_prompt:
         parts.append(f"--- SYSTEM INSTRUCTIONS ---\n{system_prompt}")
     else:
-        parts.append(f"--- SYSTEM INSTRUCTIONS ---\n{get_system_prompt(agent_type, file_cull, xml_mode)}")
+        parts.append(f"--- SYSTEM INSTRUCTIONS ---\n{get_system_prompt(agent_type, file_cull, xml_mode, consult)}")
         
     if user_request:
         parts.append(get_user_prompt(user_request, reminder=True))

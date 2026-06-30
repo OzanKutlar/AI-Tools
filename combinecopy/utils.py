@@ -371,6 +371,17 @@ def parse_xml_to_dict(xml_str: str) -> dict:
                 funcs.append({"path": path, "names": names})
         data["functions"] = funcs
         
+    # Handle CONSULT queries
+    queries_m = re.search(r'<queries>(.*?)</queries>', xml_str, re.DOTALL)
+    if queries_m:
+        queries = []
+        for q_chunk in re.findall(r'<query>(.*?)</query>', queries_m.group(1), re.DOTALL):
+            q_id = get_tag_val(q_chunk, "id")
+            q_text = get_tag_val(q_chunk, "question")
+            if q_id and q_text:
+                queries.append({"id": q_id, "question": q_text})
+        data["queries"] = queries
+        
     return data
 
 def extract_json_from_text(text: str) -> list[str]:
@@ -384,7 +395,7 @@ def extract_json_from_text(text: str) -> list[str]:
         return code_blocks
         
     # Strategy B: First { to last } (Heuristic for single payload)
-    if '"phase"' in text and any(k in text for k in ['"EXECUTION"', '"ORCHESTRATE"', '"EXPLORATION"', '"SELECT"']):
+    if '"phase"' in text and any(k in text for k in ['"EXECUTION"', '"ORCHESTRATE"', '"EXPLORATION"', '"SELECT"', '"CONSULT"']):
         start_idx = text.find('{')
         end_idx = text.rfind('}')
         if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
@@ -729,3 +740,19 @@ def resolve_paths(requested_paths: set, known_files: list[str], root_dir: str) -
             missing.append(req)
             
     return resolved, ambiguous, missing
+
+def extract_consult_answers(text: str) -> dict | None:
+    """Extracts external LLM consultation results from clipboard text."""
+    if "<consultation_results>" not in text:
+        return None
+    m = re.search(r'<consultation_results>(.*?)</consultation_results>', text, re.DOTALL | re.IGNORECASE)
+    if not m:
+        return None
+    answers = {}
+    # Standard strict format
+    for ans in re.findall(r'<answer\s+id="(.*?)">(.*?)</answer>', m.group(1), re.DOTALL | re.IGNORECASE):
+        answers[ans[0]] = ans[1].strip()
+    # Fallback for LLMs that use single quotes or no quotes
+    for ans in re.findall(r'<answer\s+id=(?:\"|\'|)(.*?)(?:\"|\'|)>\s*(.*?)</answer>', m.group(1), re.DOTALL | re.IGNORECASE):
+        if ans[0] not in answers: answers[ans[0]] = ans[1].strip()
+    return answers if answers else None
