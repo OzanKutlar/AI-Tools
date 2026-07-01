@@ -35,7 +35,8 @@ from combinecopy.utils import (
     extract_json_from_text,
     extract_xml_from_text,
     parse_xml_to_dict,
-    extract_consult_answers
+    extract_consult_answers,
+    compute_new_text
 )
 
 def _write_text_preserving(path: str, text: str, original_newline: str | None = None) -> None:
@@ -1641,25 +1642,6 @@ class AutoAgentApp(App):
             self.query_one("#btn-human-correct", Button).disabled = True
             self.query_one("#btn-open-meld", Button).disabled = True
 
-    def _compute_new_text(self, file_obj: dict, old_text: str) -> str:
-        if "content" in file_obj:
-            return file_obj["content"]
-        new_text = old_text
-        for block in file_obj.get("search_replace", []):
-            search = block.get("search", "")
-            replace = block.get("replace", "")
-            if search and search in new_text:
-                new_text = new_text.replace(search, replace, 1)
-        for block in file_obj.get("regex_replace", []):
-            pattern = block.get("pattern", "")
-            replacement = block.get("replacement", "")
-            if pattern:
-                try:
-                    new_text = re.sub(pattern, replacement, new_text)
-                except re.error:
-                    pass
-        return new_text
-
     def _render_diff_for_index(self, idx: int) -> None:
         if not self.payload or idx < 0 or idx >= len(self.payload.get("files", [])): return
         self._update_buttons()
@@ -1694,7 +1676,7 @@ class AutoAgentApp(App):
                 old_text = safe_read_file(full_path)
             except Exception:
                 old_text = "[Error reading existing file]\n"
-        new_text = self._compute_new_text(file_obj, old_text)
+        new_text = compute_new_text(file_obj, old_text)
         diff_view = self.query_one("#diff-view", RichLog)
         diff_view.clear()
         
@@ -1774,7 +1756,7 @@ class AutoAgentApp(App):
                     return
                 full_path = os.path.join(self.root_dir, file_obj["path"])
                 old_text = safe_read_file(full_path) if os.path.exists(full_path) else ""
-                new_text = self._compute_new_text(file_obj, old_text)
+                new_text = compute_new_text(file_obj, old_text)
                 if old_text == new_text:
                     self.notify("No changes detected to partially add.", severity="warning")
                     return
@@ -1975,7 +1957,7 @@ class AutoAgentApp(App):
             old_text = ""
             if os.path.exists(full_path):
                 old_text = safe_read_file(full_path)
-            new_text = self._compute_new_text(file_obj, old_text)
+            new_text = compute_new_text(file_obj, old_text)
             fd_old, path_old = tempfile.mkstemp(suffix="_old_" + os.path.basename(path))
             fd_new, path_new = tempfile.mkstemp(suffix="_new_" + os.path.basename(path))
             with os.fdopen(fd_old, 'w', encoding='utf-8') as f:
@@ -2050,7 +2032,7 @@ class AutoAgentApp(App):
             old_text = ""
             if os.path.exists(full_path):
                 old_text = safe_read_file(full_path)
-            new_text = self._compute_new_text(file_obj, old_text)
+            new_text = compute_new_text(file_obj, old_text)
             old_lines = old_text.splitlines(keepends=True)
             new_lines = new_text.splitlines(keepends=True)
             diff = difflib.unified_diff(old_lines, new_lines, n=0)

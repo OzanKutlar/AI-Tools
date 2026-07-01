@@ -8,7 +8,7 @@ from rich.panel import Panel
 
 from combinecopy.utils import (
     get_files_recursive, safe_read_file, intelligent_json_fix, 
-    generate_tree_string, console, print_auto_summary
+    generate_tree_string, console, print_auto_summary, compute_new_text
 )
 from combinecopy.prompts import build_prompt
 
@@ -20,38 +20,6 @@ MAX_DEPTH = 100
 EXTENSIONS = None
 EXCLUDE_DIRS = None
 APPLIED_FILES = []
-
-def compute_new_text(file_obj, old_text):
-    if "content" in file_obj:
-        return file_obj["content"]
-    new_text = old_text
-    for block in file_obj.get("search_replace", []):
-        search = block.get("search", "")
-        replace = block.get("replace", "")
-        if search and search in new_text:
-            new_text = new_text.replace(search, replace, 1)
-        else:
-            # Basic fallback fuzzy match by stripping lines
-            search_norm = "\n".join(l.strip() for l in search.strip().split('\n') if l.strip())
-            source_lines = new_text.split('\n')
-            search_lines = search.strip('\n').split('\n')
-            found = False
-            for i in range(len(source_lines) - len(search_lines) + 1):
-                window = '\n'.join(source_lines[i : i + len(search_lines)])
-                window_norm = "\n".join(l.strip() for l in window.strip().split('\n') if l.strip())
-                if window_norm == search_norm:
-                    new_text = new_text.replace(window, replace, 1)
-                    found = True
-                    break
-    for block in file_obj.get("regex_replace", []):
-        pattern = block.get("pattern", "")
-        replacement = block.get("replacement", "")
-        if pattern:
-            try:
-                new_text = re.sub(pattern, replacement, new_text)
-            except re.error:
-                pass
-    return new_text
 
 def count_tokens_local(text: str, model_name: str = "cl100k_base") -> dict:
     """Calculates token counts, using tiktoken if available, with character-based fallback."""

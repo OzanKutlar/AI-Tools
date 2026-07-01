@@ -511,6 +511,162 @@ def intelligent_json_fix(content: str) -> tuple[dict | None, str]:
             break
     return None, content
 
+def apply_diff_patch(original_text: str, search_text: str, replace_text: str) -> str:
+    source_lines = original_text.splitlines(keepends=True)
+    search_lines = search_text.splitlines(keepends=False)
+    replace_lines = replace_text.splitlines(keepends=False)
+
+    def _norm(t: str) -> str:
+        return "\n".join(l.strip() for l in t.strip().split('\n') if l.strip())
+
+    norm_search = _norm(search_text)
+    
+    # 1. Find the Source Window
+    start_idx = -1
+    end_idx = -1
+    
+    if len(search_lines) <= len(source_lines):
+        for i in range(len(source_lines) - len(search_lines) + 1):
+            window_text = "".join(source_lines[i:i+len(search_lines)])
+            if _norm(window_text) == norm_search:
+                start_idx = i
+                end_idx = i + len(search_lines) - 1
+                break
+                
+    if start_idx == -1:
+        for i in range(len(source_lines)):
+            window_text = ""
+            for j in range(i, len(source_lines)):
+                window_text += source_lines[j]
+                nw = _norm(window_text)
+                if nw == norm_search:
+                    start_idx = i
+                    end_idx = j
+                    break
+                elif len(nw) > len(norm_search):
+                    break
+            if start_idx != -1:
+                break
+                
+    if start_idx == -1:
+        return original_text # Cannot find patch location
+
+    window_lines = source_lines[start_idx:end_idx+1]
+    
+    # 2. Calculate Indentation Delta
+    source_indent = ""
+    for line in window_lines:
+        if line.strip():
+            source_indent = line[:len(line) - len(line.lstrip())]
+            break
+    
+    search_indent = ""
+    for line in search_lines:
+        if line.strip():
+            search_indent = line[:len(line) - len(line.lstrip())]
+            break
+            
+    def apply_delta(line: str) -> str:
+        if not line.strip(): return line
+        if search_indent and line.startswith(search_indent):
+            return source_indent + line[len(search_indent):]
+        return source_indent + line if not search_indent else line
+
+    # 3. Align and Patch using Myers Diff
+    diff_matcher = difflib.SequenceMatcher(None, search_lines, replace_lines)
+    patched_window = []
+    w_ptr = 0
+    
+    for tag, i1, i2, j1, j2 in diff_matcher.get_opcodes():
+        if tag == 'equal':
+            target_content = sum(1 for sl in search_lines[i1:i2] if sl.strip())
+            if target_content > 0:
+                matched_content = 0
+                while w_ptr < len(window_lines):
+                    w_line = window_lines[w_ptr]
+                    patched_window.append(w_line)
+                    w_ptr += 1
+                    if w_line.strip():
+                        matched_content += 1
+                    if matched_content == target_content:
+                        break
+        elif tag == 'delete':
+            target_content = sum(1 for sl in search_lines[i1:i2] if sl.strip())
+            if target_content > 0:
+                matched_content = 0
+                while w_ptr < len(window_lines):
+                    w_line = window_lines[w_ptr]
+                    w_ptr += 1
+                    if w_line.strip():
+                        matched_content += 1
+                    if matched_content == target_content:
+                        break
+        elif tag == 'insert':
+            for r_line in replace_lines[j1:j2]:
+                patched_line = apply_delta(r_line)
+                nl = '\r\n' if '\r\n' in original_text else '\n'
+                patched_window.append(patched_line + nl)
+        elif tag == 'replace':
+            target_content = sum(1 for sl in search_lines[i1:i2] if sl.strip())
+            if target_content > 0:
+                matched_content = 0
+                while w_ptr < len(window_lines):
+                    w_line = window_lines[w_ptr]
+                    w_ptr += 1
+                    if w_line.strip():
+                        matched_content += 1
+                    if matched_content == target_content:
+                        break
+            for r_line in replace_lines[j1:j2]:
+                patched_line = apply_delta(r_line)
+                nl = '\r\n' if '\r\n' in original_text else '\n'
+                patched_window.append(patched_line + nl)
+
+    while w_ptr < len(window_lines):
+        patched_window.append(window_lines[w_ptr])
+        w_ptr += 1
+        
+    prefix = source_lines[:start_idx]
+    suffix = source_lines[end_idx+1:]
+    return "".join(prefix + patched_window + suffix)
+
+def compute_new_text(file_obj: dict, old_text: str) -> str:
+    if "content" in file_obj:
+        return file_obj["content"]
+    new_text = old_text
+    for block in file_obj.get("search_replace", []):
+        search = block.get("search", "")
+        replace = block.get("replace", "")
+        if search and search in new_text:
+            new_text = new_text.replace(search, replace, 1)
+        else:
+            if search:
+                patched = apply_diff_patch(new_text, search, replace)
+                if patched != new_text:
+                    new_text = patched
+                else:
+                    # Fallback fuzzy match if diff patching fails to find window
+                    search_norm = "\n".join(l.strip() for l in search.strip().split('\n') if l.strip())
+                    source_lines = new_text.split('\n')
+                    search_lines = search.strip('\n').split('\n')
+                    found = False
+                    for i in range(len(source_lines) - len(search_lines) + 1):
+                        window = '\n'.join(source_lines[i : i + len(search_lines)])
+                        window_norm = "\n".join(l.strip() for l in window.strip().split('\n') if l.strip())
+                        if window_norm == search_norm:
+                            new_text = new_text.replace(window, replace, 1)
+                            found = True
+                            break
+    for block in file_obj.get("regex_replace", []):
+        pattern = block.get("pattern", "")
+        replacement = block.get("replacement", "")
+        if pattern:
+            try:
+                new_text = re.sub(pattern, replacement, new_text)
+            except re.error:
+                pass
+    return new_text
+
 def render_word_diff(old_text: str, new_text: str, diff_view) -> None:
     """Calculates word-level diffs and outputs them to the rich RichLog container."""
     old_lines = old_text.splitlines(keepends=True)
