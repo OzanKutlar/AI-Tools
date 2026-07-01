@@ -288,28 +288,78 @@ def main():
                     important_files.append(abs_path)
                     console.print(f"  Selected full file: [cyan]{rel_path}[/cyan] (Resolved from {f})")
 
+            missing_funcs_to_search = []
             for entry in functions_list:
                 fpath = entry.get("path")
+                names = entry.get("names", [])
+                
                 if fpath in resolved_map:
                     rel_path = resolved_map[fpath]
                     abs_path = os.path.abspath(os.path.join(root_dir, rel_path))
-                    names = entry.get("names", [])
                     
                     blocks = get_cached_blocks(abs_path, root_dir)
-                    matched_blocks = []
+                    found_names = []
                     for name in names:
                         found_block = False
                         for b in blocks:
                             if name in b["name"]:
-                                matched_blocks.append(b)
+                                if abs_path not in partial_files:
+                                    partial_files[abs_path] = []
+                                # Avoid appending duplicates if signatures overlap
+                                if b not in partial_files[abs_path]:
+                                    partial_files[abs_path].append(b)
                                 found_block = True
-                        if not found_block:
-                            console.print(f"  [yellow]Warning:[/yellow] Function/Class '[red]{name}[/red]' not found in [cyan]{rel_path}[/cyan]")
+                        if found_block:
+                            found_names.append(name)
+                        else:
+                            missing_funcs_to_search.append(name)
                     
-                    if matched_blocks:
-                        found_files_final.append(abs_path)
-                        partial_files[abs_path] = matched_blocks
-                        console.print(f"  Selected functions from [cyan]{rel_path}[/cyan]: {', '.join(names)}")
+                    if found_names:
+                        if abs_path not in found_files_final:
+                            found_files_final.append(abs_path)
+                        console.print(f"  Selected functions from [cyan]{rel_path}[/cyan]: {', '.join(found_names)}")
+                else:
+                    # File wasn't resolved, queue all its requested functions for a workspace search
+                    missing_funcs_to_search.extend(names)
+
+            # De-duplicate missing function list
+            missing_funcs_to_search = list(dict.fromkeys(missing_funcs_to_search))
+            
+            if missing_funcs_to_search:
+                from combinecopy.utils import search_ast_for_functions, get_blocks_by_name
+                candidate_map = search_ast_for_functions(missing_funcs_to_search, root_dir)
+                
+                ambiguous_funcs = {k: v for k, v in candidate_map.items() if v}
+                unfound_funcs = [k for k in missing_funcs_to_search if not candidate_map.get(k)]
+                
+                if ambiguous_funcs:
+                    from combinecopy.tui.resolve import FunctionResolutionApp
+                    app = FunctionResolutionApp(ambiguous_funcs)
+                    func_resolutions = app.run()
+                    if func_resolutions is None:
+                        console.print("[bold yellow]Function resolution cancelled by user.[/bold yellow]")
+                        return
+                        
+                    for fname, selected_paths in func_resolutions.items():
+                        if not selected_paths:
+                            console.print(f"  [yellow]Skipped[/yellow] Function/Class '[red]{fname}[/red]'")
+                            continue
+                        for spath in selected_paths:
+                            abs_p = os.path.abspath(os.path.join(root_dir, spath))
+                            blocks = get_blocks_by_name(abs_p, root_dir, fname)
+                            if blocks:
+                                if abs_p not in found_files_final:
+                                    found_files_final.append(abs_p)
+                                if abs_p not in partial_files:
+                                    partial_files[abs_p] = []
+                                existing_names = [b["name"] for b in partial_files[abs_p]]
+                                for b in blocks:
+                                    if b["name"] not in existing_names:
+                                        partial_files[abs_p].append(b)
+                                        console.print(f"  Resolved and selected function [cyan]{b['name']}[/cyan] in [cyan]{spath}[/cyan]")
+
+                for uf in unfound_funcs:
+                    console.print(f"  [yellow]Warning:[/yellow] Function/Class '[red]{uf}[/red]' could not be found anywhere in the workspace.")
 
             if not found_files_final:
                 console.print("[bold red]No files were successfully selected from the JSON payload.[/bold red]")

@@ -224,6 +224,26 @@ def get_cached_signatures(filepath: str, root_dir: str) -> list[str]:
     blocks = get_cached_blocks(filepath, root_dir)
     return [b["name"] for b in blocks]
 
+def search_ast_for_functions(func_names: list[str], root_dir: str) -> dict:
+    """Searches the AST cache for files containing the given function/class names."""
+    global _ast_cache, _ast_cache_path
+    if not _ast_cache_path:
+        init_ast_cache(root_dir)
+
+    results = {name: [] for name in func_names}
+    for rel_path, data in _ast_cache.items():
+        blocks = data.get("blocks", [])
+        for b in blocks:
+            for name in func_names:
+                if name in b["name"]:
+                    if rel_path not in results[name]:
+                        results[name].append(rel_path)
+    return results
+
+def get_blocks_by_name(filepath: str, root_dir: str, name: str) -> list[dict]:
+    blocks = get_cached_blocks(filepath, root_dir)
+    return [b for b in blocks if name in b["name"]]
+
 def is_binary_file(filepath: str) -> bool:
     """Check if a file is binary by extension or by looking for null bytes in the first 8192 bytes."""
     binary_extensions = {

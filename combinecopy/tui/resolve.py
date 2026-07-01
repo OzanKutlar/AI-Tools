@@ -1,6 +1,6 @@
 from textual.app import App, ComposeResult
 from textual.containers import Vertical, Horizontal
-from textual.widgets import Header, Footer, Label, Button, Select, Static
+from textual.widgets import Header, Footer, Label, Button, Select, Static, Checkbox
 from textual.binding import Binding
 
 class ResolutionApp(App):
@@ -63,6 +63,61 @@ class ResolutionApp(App):
                 except Exception:
                     pass
             self.exit(self.results)
+        elif event.button.id == "btn-cancel":
+            self.exit(None)
+
+    def action_cancel(self) -> None:
+        self.exit(None)
+
+class FunctionResolutionApp(App):
+    CSS = """
+    Screen { background: #2d2825; }
+    Header { background: #d08c60; color: #2d2825; }
+    Footer { background: #3c3431; }
+    #main-container { padding: 1 2; overflow-y: auto; }
+    .title { background: #4a3f39; color: #d08c60; padding: 1; text-style: bold; text-align: center; margin-bottom: 1; }
+    .req-card { border: solid #5a4d45; background: #241f1c; padding: 1; margin-bottom: 1; }
+    .req-label { text-style: bold; color: #ead6c9; margin-bottom: 1; }
+    #btn-row { height: 3; margin-top: 1; align: center middle; }
+    Button { margin: 0 1; }
+    Checkbox { background: #1e1a18; margin-bottom: 1; }
+    """
+    
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel"),
+    ]
+
+    def __init__(self, ambiguous_funcs: dict):
+        super().__init__()
+        self.ambiguous_funcs = ambiguous_funcs
+        self.checkboxes = []
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with Vertical(id="main-container"):
+            yield Label("Resolve Missing Functions", classes="title")
+            yield Static("[yellow]Some requested functions were not found in the target files. We found them in the following files. Select the ones you want to include.[/yellow]\n")
+            
+            for func_name, paths in self.ambiguous_funcs.items():
+                with Vertical(classes="req-card"):
+                    yield Label(f"Function: '{func_name}'", classes="req-label")
+                    for p in paths:
+                        chk = Checkbox(p)
+                        self.checkboxes.append((chk, func_name, p))
+                        yield chk
+                        
+            with Horizontal(id="btn-row"):
+                yield Button("Confirm Resolutions", id="btn-confirm", variant="success")
+                yield Button("Cancel", id="btn-cancel", variant="error")
+        yield Footer()
+        
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-confirm":
+            results = {k: [] for k in self.ambiguous_funcs}
+            for chk, func_name, p in self.checkboxes:
+                if chk.value:
+                    results[func_name].append(p)
+            self.exit(results)
         elif event.button.id == "btn-cancel":
             self.exit(None)
 
