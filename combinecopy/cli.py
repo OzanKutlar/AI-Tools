@@ -333,13 +333,38 @@ def main():
                 unfound_funcs = [k for k in missing_funcs_to_search if not candidate_map.get(k)]
                 
                 if ambiguous_funcs:
-                    from combinecopy.tui.resolve import FunctionResolutionApp
-                    app = FunctionResolutionApp(ambiguous_funcs)
-                    func_resolutions = app.run()
-                    if func_resolutions is None:
-                        console.print("[bold yellow]Function resolution cancelled by user.[/bold yellow]")
-                        return
+                    func_resolutions = {k: [] for k in ambiguous_funcs}
+                    for fname, paths in ambiguous_funcs.items():
+                        console.print(f"\n[bold yellow]Function/Class '{fname}' not found in target file.[/bold yellow]")
+                        console.print(f"It was found in {len(paths)} other file(s):")
+                        for i, p in enumerate(paths):
+                            console.print(f"  [cyan]{i + 1}.[/cyan] {p}")
                         
+                        while True:
+                            ans = console.input("[bold]Select files to include (A for All, comma-separated numbers like 1,3, or Enter to skip): [/bold]").strip().upper()
+                            if not ans:
+                                break
+                            if ans == 'A':
+                                func_resolutions[fname] = paths
+                                break
+                            else:
+                                try:
+                                    selected_indices = [int(x.strip()) - 1 for x in ans.split(',')]
+                                    valid = True
+                                    selected_paths = []
+                                    for idx in selected_indices:
+                                        if 0 <= idx < len(paths):
+                                            selected_paths.append(paths[idx])
+                                        else:
+                                            console.print(f"[red]Invalid number: {idx + 1}[/red]")
+                                            valid = False
+                                            break
+                                    if valid:
+                                        func_resolutions[fname] = selected_paths
+                                        break
+                                except ValueError:
+                                    console.print("[red]Invalid input. Please enter 'A' or comma-separated numbers.[/red]")
+                                    
                     for fname, selected_paths in func_resolutions.items():
                         if not selected_paths:
                             console.print(f"  [yellow]Skipped[/yellow] Function/Class '[red]{fname}[/red]'")
