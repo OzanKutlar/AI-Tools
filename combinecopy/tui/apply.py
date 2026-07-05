@@ -1927,9 +1927,15 @@ class AutoAgentApp(App):
                         btn.disabled = False
             self.call_from_thread(re_enable)
 
-    def action_copy_error(self) -> None:
+    def action_copy_error(self) -> None: 
         if self.json_error_text:
-            pyperclip.copy(self.json_error_text)
+            error_context = self.json_error_text
+            prompt = (
+                f"Your previous modification payload generated a validation error or search/replace mismatch. "
+                f"Here is the exact failure information: {error_context}. "
+                f"Re-analyze your target lines and output ONLY the corrected pure execution payload block needed to apply this file change successfully."
+            )
+            pyperclip.copy(prompt)
             self.notify("JSON error copied to clipboard!", title="Copied")
             return
         if not self.payload: return
@@ -1938,10 +1944,16 @@ class AutoAgentApp(App):
             file_obj = self.payload["files"][file_list.index]
             errors = file_obj.get("_errors", [])
             if errors:
-                error_text = f"ACTION FAILED VALIDATION FOR {file_obj.get('path', 'unknown')}\n"
+                error_context = f"ACTION FAILED VALIDATION FOR {file_obj.get('path', 'unknown')}\n"
                 for err in errors:
-                    error_text += f" - {err}\n"
-                pyperclip.copy(error_text)
+                    error_context += f" - {err}\n"
+                error_context = error_context.strip()
+                prompt = (
+                    f"Your previous modification payload generated a validation error or search/replace mismatch. "
+                    f"Here is the exact failure information: {error_context}. "
+                    f"Re-analyze your target lines and output ONLY the corrected pure execution payload block needed to apply this file change successfully."
+)
+                pyperclip.copy(prompt)
                 self.notify("File validation error copied!", title="Copied")
             else:
                 self.notify("No errors for the selected file.", severity="warning")
