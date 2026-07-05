@@ -586,10 +586,19 @@ def get_execution(agent_type: str = "default", xml_mode: bool = False, consult: 
     parts.append("</mode_descriptions>")
     return "\n\n".join(parts)
 
-def get_rest(agent_type: str = "default") -> str:
+def get_rest(agent_type: str = "default", custom_rules: str = "") -> str:
     if agent_type == "orchestrator":
         return ""  # Orchestrator does not need exhaustive artifact/formatting rules
-    return REST_DEFAULT
+    text = REST_DEFAULT
+    if custom_rules:
+        import re
+        text = re.sub(
+            r'<user_rules>.*?</user_rules>',
+            f'<user_rules>\n{custom_rules}\n</user_rules>',
+            text,
+            flags=re.DOTALL
+        )
+    return text
 
 def get_user_prompt(text: str, reminder: bool = False) -> str:
     header = "--- USER REQUEST (Reminder) ---" if reminder else "--- USER REQUEST ---"
@@ -624,7 +633,7 @@ def get_system_prompt_important(agent_type: str = "default", xml_mode: bool = Fa
 
 # --- Composition Functions ---
 
-def get_system_prompt(agent_type: str = "default", file_cull: bool = False, xml_mode: bool = False, consult: bool = False) -> str:
+def get_system_prompt(agent_type: str = "default", file_cull: bool = False, xml_mode: bool = False, consult: bool = False, custom_rules: str = "") -> str:
     parts = []
     parts.append(get_introduction(agent_type))
     parts.append(get_execution(agent_type, xml_mode, consult))  # get_execution already includes planning strings internally
@@ -632,7 +641,7 @@ def get_system_prompt(agent_type: str = "default", file_cull: bool = False, xml_
     if file_cull:
         parts.append(get_file_cull(xml_mode))
         
-    rest_str = get_rest(agent_type)
+    rest_str = get_rest(agent_type, custom_rules)
     if rest_str:
         parts.append(rest_str)
         
@@ -646,7 +655,8 @@ def build_prompt(
     system_prompt: str = "",
     agent_type: str = "default",
     xml_mode: bool = False,
-    consult: bool = False
+    consult: bool = False,
+    custom_rules: str = ""
 ) -> str:
     parts = []
     
@@ -665,7 +675,7 @@ def build_prompt(
     if system_prompt:
         parts.append(f"--- SYSTEM INSTRUCTIONS ---\n{system_prompt}")
     else:
-        parts.append(f"--- SYSTEM INSTRUCTIONS ---\n{get_system_prompt(agent_type, file_cull, xml_mode, consult)}")
+        parts.append(f"--- SYSTEM INSTRUCTIONS ---\n{get_system_prompt(agent_type, file_cull, xml_mode, consult, custom_rules)}")
         
     if user_request:
         parts.append(get_user_prompt(user_request, reminder=True))

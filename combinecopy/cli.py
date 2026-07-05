@@ -100,9 +100,18 @@ def main():
     parser.add_argument("--consult", action="store_true", help="Enable CONSULT phase for the AI to ask abstract questions to an external LLM.")
     args = parser.parse_args()
 
+    custom_rules = ""
+    ccrules_path = os.path.join(os.getcwd(), '.ccrules')
+    if os.path.exists(ccrules_path):
+        try:
+            with open(ccrules_path, 'r', encoding='utf-8') as f:
+                custom_rules = f.read().strip()
+        except Exception as e:
+            console.print(f"[dim yellow]Warning: Could not read .ccrules file: {e}[/dim yellow]")
+
     if args.system_only:
         agent_type = "orchestrator" if args.orchestrate else "cli" if args.cli else "default"
-        sys_prompt = get_system_prompt(agent_type=agent_type, file_cull=args.file_culling, xml_mode=args.xml, consult=args.consult)
+        sys_prompt = get_system_prompt(agent_type=agent_type, file_cull=args.file_culling, xml_mode=args.xml, consult=args.consult, custom_rules=custom_rules)
         important = get_system_prompt_important(agent_type=agent_type, xml_mode=args.xml)
         
         full_sys_prompt = f"--- SYSTEM INSTRUCTIONS ---\n{sys_prompt}\n\n{important}"
@@ -467,7 +476,7 @@ def main():
             console.print("[bold cyan]Phase: Instruction & System Prompt[/bold cyan]")
             sys_arg = args.system if args.system else 'DEFAULT'
             if sys_arg == 'DEFAULT' or sys_arg == '':
-                sys_prompt_text = get_system_prompt(agent_type=agent_type, file_cull=args.file_culling, xml_mode=args.xml, consult=args.consult)
+                sys_prompt_text = get_system_prompt(agent_type=agent_type, file_cull=args.file_culling, xml_mode=args.xml, consult=args.consult, custom_rules=custom_rules)
             else:
                 try:
                     with open(sys_arg, 'r', encoding='utf-8') as f:
@@ -581,7 +590,8 @@ def main():
                                 system_prompt=user_request_data["system"],
                                 agent_type=agent_type,
                                 xml_mode=args.xml,
-                                consult=args.consult
+                                consult=args.consult,
+                                custom_rules=custom_rules
                             )
                         else:
                             full_text = file_context_str

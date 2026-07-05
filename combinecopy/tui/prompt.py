@@ -1,4 +1,5 @@
 import os
+import re
 import threading
 import tempfile
 import shutil
@@ -44,13 +45,15 @@ class SystemPromptApp(App):
     #sys-prompt { height: 2fr; }
     #action-buttons { height: 3; margin-top: 1; margin-bottom: 1; }
     #btn-submit { width: 1fr; margin-right: 1; }
-    #btn-editor { width: auto; }
+    #btn-editor { width: auto; margin-right: 1; }
+    #btn-rules { width: auto; }
     """
     BINDINGS = [
         Binding("escape", "cancel", "Cancel"),
         Binding("ctrl+j", "submit", "Submit Request", show=False),
         Binding("ctrl+enter", "submit", "Submit Request"),
-        Binding("f2", "open_editor", "Open in Editor")
+        Binding("f2", "open_editor", "Open in Editor"),
+        Binding("f3", "edit_rules", "Edit Rules")
     ]
     
     def __init__(self, root_dir: str, files: list[str], sys_prompt: str):
@@ -74,6 +77,7 @@ class SystemPromptApp(App):
                 with Horizontal(id="action-buttons"):
                     yield Button("Submit & Continue (Ctrl+Enter)", id="btn-submit", variant="success")
                     yield Button("Open in Notepad++ (F2)", id="btn-editor", variant="primary")
+                    yield Button("Edit Rules (F3)", id="btn-rules", variant="warning")
         yield Footer()
         
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -81,6 +85,8 @@ class SystemPromptApp(App):
             self.action_submit()
         elif event.button.id == "btn-editor":
             self.action_open_editor()
+        elif event.button.id == "btn-rules":
+            self.action_edit_rules()
             
     def action_open_editor(self) -> None:
         btn = self.query_one("#btn-editor", Button)
@@ -142,6 +148,83 @@ class SystemPromptApp(App):
         
     def _enable_editor_button(self) -> None:
         self.query_one("#btn-editor", Button).disabled = False
+
+    def action_edit_rules(self) -> None:
+        btn = self.query_one("#btn-rules", Button)
+        if btn.disabled:
+            return
+        btn.disabled = True
+        
+        thread = threading.Thread(target=self._rules_editor_worker, daemon=True)
+        thread.start()
+        self.notify("Waiting for external editor to close...", severity="info")
+
+    def _rules_editor_worker(self) -> None:
+        ccrules_path = os.path.join(self.root_dir, '.ccrules')
+        if not os.path.exists(ccrules_path):
+            try:
+                with open(ccrules_path, 'w', encoding='utf-8') as f:
+                    f.write("# Add your project-specific AI rules here.\n")
+            except Exception as e:
+                self.call_from_thread(self.notify, f"Failed to create .ccrules: {e}", severity="error")
+                self.call_from_thread(self._enable_rules_button)
+                return
+
+        npp_path = shutil.which("notepad++") or shutil.which("notepad++.exe")
+        if not npp_path:
+            possible_paths = [
+                r"C:\Program Files\Notepad++\notepad++.exe",
+                r"C:\Program Files (x86)\Notepad++\notepad++.exe"
+            ]
+            for p in possible_paths:
+                if os.path.exists(p):
+                    npp_path = p
+                    break
+                    
+        if npp_path:
+            cmd = [npp_path, "-multiInst", "-nosession", ccrules_path]
+        elif os.name == 'nt':
+            cmd = ["notepad", ccrules_path]
+        else:
+            editor = os.environ.get('EDITOR', 'nano')
+            cmd = [editor, ccrules_path]
+            
+        try:
+            subprocess.run(cmd, check=True)
+        except Exception as e:
+            self.call_from_thread(self.notify, f"Editor failed to launch: {e}", severity="error")
+            
+        try:
+            with open(ccrules_path, 'r', encoding='utf-8') as f:
+                new_rules = f.read().strip()
+            self.call_from_thread(self._update_rules_in_textarea, new_rules)
+        except Exception as e:
+            self.call_from_thread(self.notify, f"Failed to read .ccrules: {e}", severity="error")
+        finally:
+            self.call_from_thread(self._enable_rules_button)
+
+    def _update_rules_in_textarea(self, new_rules: str) -> None:
+        ta = self.query_one("#sys-prompt", TextArea)
+        current_text = ta.text
+        if new_rules:
+            replacement = f"<user_rules>\n{new_rules}\n</user_rules>"
+        else:
+            replacement = "<user_rules>\n\nThe user has not defined any custom rules.\n\n</user_rules>"
+            
+        new_text = re.sub(
+            r'<user_rules>.*?</user_rules>',
+            replacement,
+            current_text,
+            flags=re.DOTALL
+        )
+        if new_text != current_text:
+            ta.text = new_text
+            self.notify("System prompt rules updated!", title="Success")
+        else:
+            self.notify("Rules checked, no changes detected.", severity="info")
+            
+    def _enable_rules_button(self) -> None:
+        self.query_one("#btn-rules", Button).disabled = False
 
     def action_submit(self) -> None:
         req = self.query_one("#user-request", TextArea).text
