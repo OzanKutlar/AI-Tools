@@ -10,6 +10,7 @@ import atexit
 import shutil
 import random
 import re
+import subprocess
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 from rich.rule import Rule
@@ -41,7 +42,8 @@ from combinecopy.prompts import (
     get_user_prompt,
     get_ast,
     get_file_context,
-    get_system_prompt_important
+    get_system_prompt_important,
+    get_git_diff
 )
 
 from combinecopy.tui.selection import run_file_selector
@@ -98,6 +100,7 @@ def main():
     parser.add_argument("-js", "--json-select", action="store_true", help="Parse a JSON selection payload from clipboard to automatically select files/functions")
     parser.add_argument("-x", "--xml", action="store_true", help="Instruct the AI to use XML for payloads instead of JSON to completely avoid quote escaping issues.")
     parser.add_argument("--consult", action="store_true", help="Enable CONSULT phase for the AI to ask abstract questions to an external LLM.")
+    parser.add_argument("-d", "--diff", action="store_true", help="Inject current uncommitted git diff directly into the prompt context.")
     args = parser.parse_args()
 
     custom_rules = ""
@@ -491,6 +494,24 @@ def main():
                 console.print(Panel("System prompt setup cancelled.", title="Cancelled", style="bold yellow"))
                 return
 
+        git_diff_text = ""
+        if args.diff:
+            try:
+                out = subprocess.check_output(
+                    ['git', 'diff', 'HEAD'],
+                    cwd=root_dir,
+                    text=True,
+                    errors="replace",
+                    stderr=subprocess.STDOUT
+                )
+                if out.strip():
+                    git_diff_text = out.strip()
+                    console.print("[cyan]ℹ[/cyan] Captured uncommitted git diff.")
+                else:
+                    console.print("[yellow]Warning: --diff flag provided but no git diff found.[/yellow]")
+            except Exception as e:
+                console.print(f"[yellow]Warning: Failed to capture git diff: {e}[/yellow]")
+
         files_per_batch = math.ceil(total_files / batch_count)
         console.print(f"\n[dim]Splitting into {batch_count} batch(es). ~{files_per_batch} files/batch.[/dim]\n")
     
@@ -591,10 +612,13 @@ def main():
                                 agent_type=agent_type,
                                 xml_mode=args.xml,
                                 consult=args.consult,
-                                custom_rules=custom_rules
+                                custom_rules=custom_rules,
+                                git_diff=git_diff_text
                             )
                         else:
                             full_text = file_context_str
+                            if git_diff_text:
+                                full_text += f"\n\n{get_git_diff(git_diff_text)}"
                     else:
                         parts = []
                         if batch_num == 1 and user_request_data:
@@ -602,10 +626,14 @@ def main():
                             if args.file_culling:
                                 parts.append(get_ast(generate_tree_string(found_files, root_dir)))
                             parts.append(get_file_context(file_context_str))
+                            if git_diff_text:
+                                parts.append(get_git_diff(git_diff_text))
                             parts.append(get_user_prompt(user_request_data["request"]))
                             parts.append(f"--- SYSTEM INSTRUCTIONS ---\n{user_request_data['system']}")
                         else:
                             parts.append(file_context_str)
+                            if batch_num == 1 and git_diff_text and not user_request_data:
+                                parts.append(get_git_diff(git_diff_text))
                             
                         if batch_num == batch_count and user_request_data:
                             parts.append(get_user_prompt(user_request_data["request"], reminder=True))

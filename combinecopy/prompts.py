@@ -600,6 +600,9 @@ def get_rest(agent_type: str = "default", custom_rules: str = "") -> str:
         )
     return text
 
+def get_git_diff(git_diff_text: str) -> str:
+    return f"--- CURRENT UNCOMMITTED GIT DIFF ---\n{git_diff_text}"
+
 def get_user_prompt(text: str, reminder: bool = False) -> str:
     header = "--- USER REQUEST (Reminder) ---" if reminder else "--- USER REQUEST ---"
     return f"{header}\n{text}"
@@ -656,7 +659,8 @@ def build_prompt(
     agent_type: str = "default",
     xml_mode: bool = False,
     consult: bool = False,
-    custom_rules: str = ""
+    custom_rules: str = "",
+    git_diff: str = ""
 ) -> str:
     parts = []
     
@@ -668,6 +672,9 @@ def build_prompt(
         
     if file_context:
         parts.append(get_file_context(file_context))
+        
+    if git_diff:
+        parts.append(get_git_diff(git_diff))
         
     if user_request:
         parts.append(get_user_prompt(user_request))

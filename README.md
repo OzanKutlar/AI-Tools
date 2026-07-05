@@ -84,6 +84,7 @@ combineCopy -f gradle kt xml -s -a --system
 *   `-e, --exclude <dir...>`: Space-separated directory names to exclude from the scan.
 *   `-b, --batches <int>`: Number of batches to split large workspace context copies into (default: 1).
 *   `--file-culling, --file-cull`: Enable file culling and AST map generation mode.
+*   `-d, --diff`: Inject current uncommitted git diff directly into the prompt context.
 
 **Interactive & UI Modes**
 *   `-s, --select`: Launch the interactive TUI selector to manually filter the context payload.
