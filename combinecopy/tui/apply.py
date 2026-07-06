@@ -812,6 +812,9 @@ class PartialAddScreen(ModalScreen[str]):
 
 class OrchestratorAgentApp(App):
     """TUI for monitoring clipboard and applying AI orchestration changes."""
+    # We add specialized layout rules to expose execution logging inside the shell interface.
+    def select_terminal_mode(self) -> None:
+        pass
     CSS = """
     Screen { background: #2d2825; }
     Header { background: #d08c60; color: #2d2825; }
@@ -892,6 +895,154 @@ class OrchestratorAgentApp(App):
     def on_mount(self) -> None:
         self.polling_timer = self.set_interval(0.5, self.check_clipboard)
 
+    def stage_junior_dispatch_prompt(self) -> None:
+        """Extracts surgical references from the AST and packages the junior dispatch payload."""
+        if not self.blueprint_payload:
+            return
+        tasks = self.blueprint_payload.get("dispatches", [])
+        if self.current_task_idx >= len(tasks):
+            self.notify("All architectural tasks processed.")
+            return
+            
+        task = tasks[self.current_task_idx]
+        sep = "-" * 35
+        
+        # 1. Harvest target files
+        targets_buffer = []
+        for path in task.get("targets", []):
+            fp = os.path.abspath(os.path.join(self.root_dir, path))
+            targets_buffer.append(f"{sep}\nFILE: {path}\n{sep}")
+            _, ext = os.path.splitext(path)
+            targets_buffer.append(f"```{ext.lstrip('.')}\n{safe_read_file(fp) if os.path.exists(fp) else '# Brand new file'}\n```")
+            
+        # 2. Harvest context files and functions
+        context_buffer = []
+        for path in task.get("context_files", []):
+            fp = os.path.abspath(os.path.join(self.root_dir, path))
+            if os.path.exists(fp):
+                context_buffer.append(f"{sep}\nREAD-ONLY CONTEXT FILE: {path}\n{sep}\n```\n{safe_read_file(fp)}\n```")
+                
+        for entry in task.get("context_functions", []):
+            path = entry.get("path")
+            fp = os.path.abspath(os.path.join(self.root_dir, path))
+            if os.path.exists(fp):
+                from combinecopy.utils import get_cached_blocks
+                blocks = get_cached_blocks(fp, self.root_dir)
+                context_buffer.append(f"{sep}\nREAD-ONLY CONTEXT FUNCTIONS FROM {path}:\n{sep}")
+                file_content = safe_read_file(fp)
+                file_lines = file_content.splitlines()
+                for name in entry.get("names", []):
+                    for b in blocks:
+                        if name in b["name"]:
+                            slice_code = "\n".join(file_lines[b["start"]:b["end"]+1])
+                            context_buffer.append(f"```\n{slice_code}\n```")
+                            
+        # 3. Harvest reference style guidelines
+        ref_buffer = []
+        for entry in task.get("reference_functions", []):
+            path = entry.get("path")
+            fp = os.path.abspath(os.path.join(self.root_dir, path))
+            if os.path.exists(fp):
+                from combinecopy.utils import get_cached_blocks
+                blocks = get_cached_blocks(fp, self.root_dir)
+                ref_buffer.append(f"Reason for template baseline: {entry.get('reason', 'Formatting uniformity')}")
+                file_content = safe_read_file(fp)
+                file_lines = file_content.splitlines()
+                for name in entry.get("names", []):
+                    for b in blocks:
+                        if name in b["name"]:
+                            slice_code = "\n".join(file_lines[b["start"]:b["end"]+1])
+                            ref_buffer.append(f"```\n{slice_code}\n```")
+                            
+        from combinecopy.prompts import build_junior_dispatch_prompt
+        dispatch_prompt = build_junior_dispatch_prompt(
+            task,
+            "\n".join(targets_buffer),
+            "\n".join(context_buffer),
+            "\n".join(ref_buffer)
+        )
+        
+        pyperclip.copy(dispatch_prompt)
+        self.last_clipboard = dispatch_prompt
+        
+        ta = self.query_one("#prompt-view", TextArea)
+        ta.text = f"--- DISPATCH COPIED TO CLIPBOARD FOR JUNIOR MODEL (Task ID: {task.get('task_id')}) ---\n\n{dispatch_prompt}"
+        self.notify(f"Junior model dispatch prompt copied for {task.get('task_id')}!")
+        self.current_orchestration_state = "AWAITING_LABOR"
+        self.polling_timer.resume()
+
+    def process_junior_labor(self, data: dict) -> None:
+        """Intercepts the execution payload block, runs in-memory diffing, and prompts the senior reviewer."""
+        self.polling_timer.pause()
+        task = self.blueprint_payload.get("dispatches", [])[self.current_task_idx]
+        
+        unified_diff_accumulator = []
+        for file_obj in data.get("files", []):
+            path = file_obj.get("path", "")
+            full_path = os.path.join(self.root_dir, path)
+            old_text = safe_read_file(full_path) if os.path.exists(full_path) else ""
+            new_text = compute_new_text(file_obj, old_text)
+            
+            diff_lines = list(difflib.unified_diff(
+                old_text.splitlines(keepends=True),
+                new_text.splitlines(keepends=True),
+                fromfile=f"a/{path}",
+                tofile=f"b/{path}"
+            ))
+            if diff_lines:
+                unified_diff_accumulator.append("".join(diff_lines))
+                
+        if not unified_diff_accumulator:
+            self.notify("Junior model emitted empty diff context.", severity="warning")
+            self.polling_timer.resume()
+            return
+            
+        self.pending_junior_payload = data
+        total_diff_str = "\n".join(unified_diff_accumulator)
+        
+        from combinecopy.prompts import build_senior_review_prompt
+        review_prompt = build_senior_review_prompt(task.get("task_id"), task.get("instructions"), total_diff_str)
+        
+        pyperclip.copy(review_prompt)
+        self.last_clipboard = review_prompt
+        
+        ta = self.query_one("#prompt-view", TextArea)
+        ta.text = f"--- COPIED PR AUDIT PROMPT FOR SENIOR MODEL ---\n\n{review_prompt}"
+        self.notify("Staged virtual diff verification back to the Senior Model!")
+        self.current_orchestration_state = "AWAITING_REVIEW"
+        self.polling_timer.resume()
+
+    def process_senior_review(self, data: dict) -> None:
+        """Decides workflow state based on the closed-loop audit result."""
+        self.polling_timer.pause()
+        decision = data.get("decision", "reject").lower()
+        feedback = data.get("feedback", "")
+        task = self.blueprint_payload.get("dispatches", [])[self.current_task_idx]
+        
+        if decision == "approve":
+            self.notify("Senior model approved changes! Applying patch locally.")
+            # Apply memory changes cleanly via a mock structural injection sequence
+            from combinecopy.tui.apply import AutoAgentApp
+            app = AutoAgentApp(self.root_dir, ignore_initial_clipboard=True, xml_mode=False)
+            self.call_from_thread(lambda: app.load_payload(self.pending_junior_payload))
+            
+            self.current_task_idx += 1
+            tasks = self.blueprint_payload.get("dispatches", [])
+            if self.current_task_idx < len(tasks):
+                self.stage_junior_dispatch_prompt()
+            else: 
+                self.query_one("#status-label", Label).update("Orchestrated Splitting Run Complete!")
+                self.exit(True)
+        else:
+            # Rejected or Modify loop branch: trigger correction cycle
+            remediation = f"Your previous output was REJECTED by the Architect dev.\nReason/Feedback: {feedback}\n\nPlease correct your search blocks and emit a clean execution payload.\n"
+            pyperclip.copy(remediation)
+            self.last_clipboard = remediation
+            self.query_one("#prompt-view", TextArea).text = f"--- REDO DISPATCH STAGED FOR JUNIOR DEV ---\n\n{remediation}"
+            self.notify("Staged remediation task loop down to junior builder.", severity="warning")
+            self.current_orchestration_state = "AWAITING_LABOR"
+            self.polling_timer.resume()
+
     def check_clipboard(self) -> None:
         if getattr(self, 'is_loading_payload', False):
             return
@@ -901,32 +1052,25 @@ class OrchestratorAgentApp(App):
                 return
             self.last_clipboard = content
             
-            # Check XML first
-            if '<antigravity_payload>' in content:
-                xml_blocks = extract_xml_from_text(content)
-                for xml_str in xml_blocks:
-                    data = parse_xml_to_dict(xml_str)
-                    if data:
-                        if data.get("phase") == "ORCHESTRATE" and "prompt" in data:
-                            self.load_payload(data)
-                            return
-                        elif data.get("phase") == "EXPLORATION" and "request_files" in data:
-                            self.handle_exploration(data)
-                            return
-                            
-            # Fallback to JSON
-            if '"phase":' in content and ('"ORCHESTRATE"' in content or '"EXPLORATION"' in content):
+            # Split-Model Pattern JSON Interceptor Strategy
+            if '"phase":' in content or '<phase>' in content:
                 json_blocks = extract_json_from_text(content)
                 for json_str in json_blocks:
                     try:
                         data = json.loads(json_str)
-                        if isinstance(data, dict):
-                            if data.get("phase") == "ORCHESTRATE" and "prompt" in data:
-                                self.load_payload(data)
-                                return
-                            elif data.get("phase") == "EXPLORATION" and "request_files" in data:
-                                self.handle_exploration(data)
-                                return
+                        if not isinstance(data, dict): 
+                            continue
+                        phase = data.get("phase", "").upper()
+                        
+                        if phase == "BLUEPRINT":
+                            self.handle_split_model_blueprint(data)
+                            return
+                        elif phase == "EXECUTION" and getattr(self, "current_orchestration_state", "") == "AWAITING_LABOR":
+                            self.process_junior_labor(data)
+                            return
+                        elif phase == "REVIEW" and getattr(self, "current_orchestration_state", "") == "AWAITING_REVIEW":
+                            self.process_senior_review(data)
+                            return
                     except Exception:
                         continue
         except Exception:
@@ -982,26 +1126,28 @@ class OrchestratorAgentApp(App):
         self.polling_timer.resume()
         self.query_one("#status-label", Label).update("Waiting for Orchestrator AI...")
 
-    def load_payload(self, data: dict) -> None:
+    def handle_split_model_blueprint(self, data: dict) -> None:
+        """Processes the high-level senior architect blueprint payload."""
         self.polling_timer.pause()
-        self.payload = data
-        self.query_one("#status-label", Label).update("Orchestrator Payload Ready")
-        self.query_one("#ai-markdown", Markdown).update(data.get("markdown", "No markdown provided."))
-        
-        original = data.get("original_request", "")
-        instr = data.get("prompt", "")
-        display_parts = []
-        if original:
-            display_parts.append(f"--- ORIGINAL REQUEST ---\n{original}")
-        if instr:
-            display_parts.append(f"--- ORCHESTRATOR INSTRUCTIONS ---\n{instr}")
+        self.blueprint_payload = data
+        dispatches = data.get("dispatches", [])
+        if not dispatches:
+            self.notify("Blueprint has no target tasks.", severity="error")
+            self.polling_timer.resume()
+            return
             
-        self.query_one("#prompt-view", TextArea).text = "\n\n".join(display_parts)
+        self.query_one("#status-label", Label).update(f"Blueprint Captured: {data.get('blueprint_id', 'N/A')}")
+        self.query_one("#ai-markdown", Markdown).update(data.get("markdown", "Plan generated by architect."))
+        
         file_list = self.query_one("#file-list", ListView)
         file_list.clear()
-        for f in data.get("files", []):
-            file_list.append(ListItem(Label(f)))
-        self.query_one("#btn-generate", Button).disabled = False
+        for task in dispatches:
+            paths = ", ".join(task.get("targets", []))
+            file_list.append(ListItem(Label(f"[Task {task.get('task_id')}] -> {paths}")))
+            
+        # Auto-trigger prompt pipeline for the first task entry
+        self.current_task_idx = 0
+        self.stage_junior_dispatch_prompt()
 
     def action_generate(self) -> None:
         btn = self.query_one("#btn-generate", Button)
