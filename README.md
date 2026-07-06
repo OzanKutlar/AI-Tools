@@ -75,38 +75,56 @@ combineCopy -f gradle kt xml -s -a --system
 
 ### Command-Line Arguments
 
-**Path Targets**
-*   `paths`: Specific files, directories, or `.zip` archives to include. Bypasses the full directory scan if provided.
+#### Path Targets
 
-**Filtering & Output Control**
-*   `-l, --limit <int>`: Maximum recursion depth for scanning directories (default: 100).
-*   `-f, --file_types <ext...>`: Space-separated file extensions to include (e.g., `-f py js html`).
-*   `-e, --exclude <dir...>`: Space-separated directory names to exclude from the scan.
-*   `-b, --batches <int>`: Number of batches to split large workspace context copies into (default: 1).
-*   `--file-culling, --file-cull`: Enable file culling and AST map generation mode.
-*   `-d, --diff`: Inject current uncommitted git diff directly into the prompt context.
+| Option | Description | Default | Alias |
+| :--- | :--- | :--- | :--- |
+| `paths` | Specific files, directories, or `.zip` archives to include. Bypasses the full directory scan if provided. | none | none |
 
-**Interactive & UI Modes**
-*   `-s, --select`: Launch the interactive TUI selector to manually filter the context payload.
-*   `--system`: Launch a TUI to inject system prompts and user instructions. Accepts an optional path to a custom text file.
-*   `--web`: Launch the local Flask-based Web UI server on `127.0.0.1:5000`.
+#### Filtering & Output Control
 
-**Agent & Execution Modes**
-*   `-a, --auto`: Run in continuous AI listener mode, monitoring the clipboard for execution payloads.
-*   `-r, --revert`: Run the continuous listener mode, but reverse all incoming modifications.
-*   `-o, --orchestrate`: Run in orchestrator mode to generate execution plans for downstream models.
-*   `--cli`: Enable CLI Mode, allowing the LLM to output terminal commands in its payload.
-*   `--consult`: Enable the consultation phase, permitting the AI to query external Expert LLMs.
-*   `-x, --xml`: Instruct the AI to output XML payloads instead of JSON, bypassing quote-escaping vulnerabilities.
-*   `-js, --json-select`: Parse a selection payload directly from the clipboard to automatically retrieve files/functions during the exploration phase.
+| Option | Description | Default | Alias |
+| :--- | :--- | :--- | :--- |
+| `--limit <int>` | Maximum recursion depth for scanning directories. | 100 | -l |
+| `--file_types <ext...>` | Space-separated file extensions to include (e.g., `py js html`). | none | -f |
+| `--exclude <dir...>` | Space-separated directory names to exclude from the scan. | none | -e |
+| `--batches <int>` | Number of batches to split large workspace context copies into. | 1 | -b |
+| `--file-culling`, `--file-cull` | Enable file culling and AST map generation mode. | false | none |
+| `--diff` | Inject current uncommitted git diff directly into the prompt context. | false | -d |
 
-**Environment Integrations**
-*   `--web-apply`: Enable web macro mode. Translates AI execution payloads into simulated keyboard strokes for browser-based IDEs.
-*   `--tfs`: Use TFVC (`tf.exe`) instead of Git for file checkout, addition, deletion, and check-in operations.
+#### Interactive & UI Modes
 
-**Clipboard & File Outputs**
-*   `--file`: Save the generated prompt to a temporary `.txt` file and copy the file object to the clipboard.
-*   `--system-only`: Copy the raw system prompt text to the clipboard and exit.
+| Option | Description | Default | Alias |
+| :--- | :--- | :--- | :--- |
+| `--select` | Launch the interactive TUI selector to manually filter the context payload. | false | -s |
+| `--system` | Launch a TUI to inject system prompts and user instructions. Accepts an optional path to a custom text file. | none | none |
+| `--web` | Launch the local Flask-based Web UI server on `127.0.0.1:5000`. | false | none |
+
+#### Agent & Execution Modes
+
+| Option | Description | Default | Alias |
+| :--- | :--- | :--- | :--- |
+| `--auto` | Run in continuous AI listener mode, monitoring the clipboard for execution payloads. | false | -a |
+| `--revert` | Run the continuous listener mode, but reverse all incoming modifications. | false | -r |
+| `--orchestrate` | Run in orchestrator mode to generate execution plans for downstream models. | false | -o |
+| `--cli` | Enable CLI Mode, allowing the LLM to output terminal commands in its payload. | false | none |
+| `--consult` | Enable the consultation phase, permitting the AI to query external Expert LLMs. | false | none |
+| `--xml` | Instruct the AI to output XML payloads instead of JSON, bypassing quote-escaping vulnerabilities. | false | -x |
+| `--json-select` | Parse a selection payload directly from the clipboard to automatically retrieve files/functions during the exploration phase. | false | -js |
+
+#### Environment Integrations
+
+| Option | Description | Default | Alias |
+| :--- | :--- | :--- | :--- |
+| `--web-apply` | Enable web macro mode. Translates AI execution payloads into simulated keyboard strokes for browser-based IDEs. | false | none |
+| `--tfs` | Use TFVC (`tf.exe`) instead of Git for file checkout, addition, deletion, and check-in operations. | false | none |
+
+#### Clipboard & File Outputs
+
+| Option | Description | Default | Alias |
+| :--- | :--- | :--- | :--- |
+| `--file` | Save the generated prompt to a temporary `.txt` file and copy the file object to the clipboard. | false | none |
+| `--system-only` | Copy the raw system prompt text to the clipboard and exit. | false | none |
 
 ---
 
