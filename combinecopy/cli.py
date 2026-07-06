@@ -598,6 +598,12 @@ def main():
                             file_context_buffer.append(f"- {mfw}")
                         file_context_buffer.append("Please check your paths and request them again if necessary.\n")
                         
+                    if args.json_select:
+                        from combinecopy.prompts import get_prune
+                        file_context_buffer.append("\n--- SYSTEM NOTE: CONTEXT PRUNING ---")
+                        file_context_buffer.append(get_prune(args.xml))
+                        file_context_buffer.append("")
+                        
                     file_context_str = "\n".join(file_context_buffer)
                     full_text = ""
                     

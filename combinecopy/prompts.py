@@ -521,6 +521,49 @@ def get_planning(agent_type: str = "default") -> str:
 def get_file_cull(xml_mode: bool = False) -> str:
     return FILE_CULLING_XML if xml_mode else FILE_CULLING
 
+PRUNE_DEFAULT = r"""<prune_instructions>
+Managing your context window is critical. Since you just selected these files, please evaluate if they are all strictly necessary.
+You can output a PRUNE payload to explicitly declare which files should be kept (`stay: true`), and which can be dropped (`stay: false`). For dropped files, you must explain your reasoning. The user's system will automatically replace the dropped files with your reasoning stub to save memory.
+You can continue talking and explaining your thoughts after sending the PRUNE payload.
+
+Output the payload wrapped in a markdown code block:
+```json
+{
+  "phase": "PRUNE",
+  "files": [
+    {
+      "path": "relative/path/to/file.py",
+      "stay": false,
+      "reason": "This file only handles X, which is unrelated to the bug in Y."
+    }
+  ]
+}
+```
+</prune_instructions>"""
+
+PRUNE_XML = r"""<prune_instructions>
+Managing your context window is critical. Since you just selected these files, please evaluate if they are all strictly necessary.
+You can output a PRUNE payload to explicitly declare which files should be kept (`stay: true`), and which can be dropped (`stay: false`). For dropped files, you must explain your reasoning. The user's system will automatically replace the dropped files with your reasoning stub to save memory.
+You can continue talking and explaining your thoughts after sending the PRUNE payload.
+
+Output the payload wrapped in a markdown code block:
+```xml
+<antigravity_payload>
+  <phase>PRUNE</phase>
+  <files>
+    <file>
+      <path>relative/path/to/file.py</path>
+      <stay>false</stay>
+      <reason>This file only handles X, which is unrelated to the bug in Y.</reason>
+    </file>
+  </files>
+</antigravity_payload>
+```
+</prune_instructions>"""
+
+def get_prune(xml_mode: bool = False) -> str:
+    return PRUNE_XML if xml_mode else PRUNE_DEFAULT
+
 def get_consult(xml_mode: bool = False) -> str:
     return CONSULT_XML if xml_mode else CONSULT_DEFAULT
 
