@@ -522,14 +522,19 @@ class MacroScreen(ModalScreen):
                 new_text = new_text.replace(s, r, 1)
             else:
                 ns = _norm(s)
-                lines = s.strip('\n').split('\n')
                 source_lines = new_text.split('\n')
                 found = False
-                for j in range(len(source_lines) - len(lines) + 1):
-                    window = '\n'.join(source_lines[j : j + len(lines)])
-                    if _norm(window) == ns:
-                        new_text = new_text.replace(window, r, 1)
-                        found = True
+                for j in range(len(source_lines)):
+                    for k in range(j, len(source_lines)):
+                        window = '\n'.join(source_lines[j : k + 1])
+                        window_norm = _norm(window)
+                        if window_norm == ns:
+                            new_text = new_text.replace(window, r, 1)
+                            found = True
+                            break
+                        elif len(window_norm) > len(ns):
+                            break
+                    if found:
                         break
                 if not found:
                     errors.append(f"Block {i+1} not found.")
@@ -1582,17 +1587,22 @@ class AutoAgentApp(App):
                             normalized_old = self._normalize_text(old_text)
                             normalized_search = self._normalize_text(search_text)
                             if normalized_search in normalized_old:
-                                search_lines = search_text.strip('\n').split('\n')
                                 source_lines = old_text.split('\n')
                                 found_exact = False
-                                for i in range(len(source_lines) - len(search_lines) + 1):
-                                    window = '\n'.join(source_lines[i : i + len(search_lines)])
-                                    if self._normalize_text(window) == normalized_search:
-                                        block['search'] = window
-                                        warn_msg = f"Used fuzzy matching for search block {b_idx + 1}."
-                                        if warn_msg not in file_obj.setdefault("_warnings", []):
-                                            file_obj["_warnings"].append(warn_msg)
-                                        found_exact = True
+                                for i in range(len(source_lines)):
+                                    for j in range(i, len(source_lines)):
+                                        window = '\n'.join(source_lines[i : j + 1])
+                                        nw = self._normalize_text(window)
+                                        if nw == normalized_search:
+                                            block['search'] = window
+                                            warn_msg = f"Used fuzzy matching for search block {b_idx + 1}."
+                                            if warn_msg not in file_obj.setdefault("_warnings", []):
+                                                file_obj["_warnings"].append(warn_msg)
+                                            found_exact = True
+                                            break
+                                        elif len(nw) > len(normalized_search):
+                                            break
+                                    if found_exact:
                                         break
                                 if not found_exact:
                                     errors.append(f"Fuzzy match found but couldn't map to original text for block {b_idx+1}.")

@@ -668,14 +668,18 @@ def compute_new_text(file_obj: dict, old_text: str) -> str:
                     # Fallback fuzzy match if diff patching fails to find window
                     search_norm = "\n".join(l.strip() for l in search.strip().split('\n') if l.strip())
                     source_lines = new_text.split('\n')
-                    search_lines = search.strip('\n').split('\n')
                     found = False
-                    for i in range(len(source_lines) - len(search_lines) + 1):
-                        window = '\n'.join(source_lines[i : i + len(search_lines)])
-                        window_norm = "\n".join(l.strip() for l in window.strip().split('\n') if l.strip())
-                        if window_norm == search_norm:
-                            new_text = new_text.replace(window, replace, 1)
-                            found = True
+                    for i in range(len(source_lines)):
+                        for j in range(i, len(source_lines)):
+                            window = '\n'.join(source_lines[i : j + 1])
+                            window_norm = "\n".join(l.strip() for l in window.strip().split('\n') if l.strip())
+                            if window_norm == search_norm:
+                                new_text = new_text.replace(window, replace, 1)
+                                found = True
+                                break
+                            elif len(window_norm) > len(search_norm):
+                                break
+                        if found:
                             break
     for block in file_obj.get("regex_replace", []):
         pattern = block.get("pattern", "")
