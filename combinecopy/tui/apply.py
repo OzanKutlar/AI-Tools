@@ -213,10 +213,10 @@ class RehabScreen(ModalScreen[bool]):
                 elif os.path.exists(r"C:\Program Files\Meld\Meld.exe"):
                     meld_exe = r"C:\Program Files\Meld\Meld.exe"
                 else:
-                    self.app.call_from_thread(self.notify, "Meld not found! Please install Meld and add it to PATH.", severity="error")
+                    self.notify("Meld not found! Please install Meld and add it to PATH.", severity="error")
                     return
 
-            self.app.call_from_thread(self.notify, "Launching Meld... Please resolve changes and close Meld when done.", severity="info")
+            self.notify("Launching Meld... Please resolve changes and close Meld when done.", severity="info")
             process = await asyncio.create_subprocess_exec(meld_exe, path_ai, path_merge, path_human)
             await process.wait()
 
@@ -234,10 +234,10 @@ class RehabScreen(ModalScreen[bool]):
             self.file_obj["_added"] = added
             self.file_obj["_removed"] = removed
             
-            self.app.call_from_thread(self.dismiss, True)
+            self.dismiss(True)
 
         except Exception as e:
-            self.app.call_from_thread(self.notify, f"Failed to run Meld: {e}", severity="error")
+            self.notify(f"Failed to run Meld: {e}", severity="error")
         finally:
             for p in [path_ai, path_merge, path_human]:
                 try: os.remove(p)
