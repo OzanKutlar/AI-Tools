@@ -134,10 +134,13 @@ class RehabScreen(ModalScreen[bool]):
         self.full_path = os.path.join(self.root_dir, self.file_path)
         self._solution_loaded = False
         self.filename = os.path.basename(self.file_path)
-        
+        self.original_newline = detect_newline(self.full_path) if os.path.exists(self.full_path) else "\n"
+        if not self.original_newline:
+            self.original_newline = "\n"
+            
         fd, self.temp_human_path = tempfile.mkstemp(suffix=f"_HUMAN_{self.filename}", text=True)
-        with os.fdopen(fd, 'w', encoding='utf-8') as f:
-            f.write(self.original_text)
+        os.close(fd)
+        _write_text_preserving(self.temp_human_path, self.original_text, original_newline=self.original_newline)
 
     def on_unmount(self) -> None:
         try:
@@ -223,13 +226,14 @@ class RehabScreen(ModalScreen[bool]):
 
     async def _run_meld(self) -> None:
         ai_text = compute_new_text(self.file_obj, self.original_text)
-
         base_name = os.path.basename(self.file_path)
         fd_ai, path_ai = tempfile.mkstemp(suffix=f"_AI_{base_name}", text=True)
         fd_merge, path_merge = tempfile.mkstemp(suffix=f"_MERGED_{base_name}", text=True)
+        os.close(fd_ai)
+        os.close(fd_merge)
 
-        with os.fdopen(fd_ai, 'w', encoding='utf-8') as f: f.write(ai_text)
-        with os.fdopen(fd_merge, 'w', encoding='utf-8') as f: f.write(self.original_text)
+        _write_text_preserving(path_ai, ai_text, original_newline=self.original_newline)
+        _write_text_preserving(path_merge, self.original_text, original_newline=self.original_newline)
 
         try:
             meld_exe = shutil.which("meld") or shutil.which("meld.exe")
@@ -246,11 +250,9 @@ class RehabScreen(ModalScreen[bool]):
             process = await asyncio.create_subprocess_exec(meld_exe, path_ai, path_merge, self.temp_human_path)
             await process.wait()
 
-            with open(path_merge, 'r', encoding='utf-8') as f:
-                final_text = f.read()
+            final_text = safe_read_file(path_merge)
 
-            original_newline = detect_newline(self.full_path) if os.path.exists(self.full_path) else "\n"
-            _write_text_preserving(self.full_path, final_text, original_newline=original_newline)
+            _write_text_preserving(self.full_path, final_text, original_newline=self.original_newline)
             
             old_lines = self.original_text.splitlines(keepends=True)
             new_lines = final_text.splitlines(keepends=True)
@@ -2303,10 +2305,9 @@ class AutoAgentApp(App):
         thread = threading.Thread(target=self._fix_json_worker, args=(self.broken_json_content,), daemon=True)
         thread.start()
         self.notify("Waiting for external editor to close...", severity="info")
-        
     def _fix_json_worker(self, current_text: str) -> None:
         fd, temp_path = tempfile.mkstemp(suffix=".json", text=True)
-        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+        with os.fdopen(fd, 'w', encoding='utf-8', newline='') as f:
             f.write(current_text)
         npp_path = shutil.which("notepad++") or shutil.which("notepad++.exe")
         if not npp_path:
@@ -2380,7 +2381,6 @@ class AutoAgentApp(App):
                 self.notify("File validation error copied!", title="Copied")
             else:
                 self.notify("No errors for the selected file.", severity="warning")
-
     def action_open_meld(self) -> None:
         btn = self.query_one("#btn-open-meld", Button)
         if btn.disabled: return
@@ -2390,15 +2390,20 @@ class AutoAgentApp(App):
             path = file_obj.get("path")
             full_path = os.path.join(self.root_dir, path)
             old_text = ""
+            nl = "\n"
             if os.path.exists(full_path):
                 old_text = safe_read_file(full_path)
+                nl = detect_newline(full_path) or "\n"
             new_text = compute_new_text(file_obj, old_text)
-            fd_old, path_old = tempfile.mkstemp(suffix="_old_" + os.path.basename(path))
-            fd_new, path_new = tempfile.mkstemp(suffix="_new_" + os.path.basename(path))
-            with os.fdopen(fd_old, 'w', encoding='utf-8') as f:
-                f.write(old_text)
-            with os.fdopen(fd_new, 'w', encoding='utf-8') as f:
-                f.write(new_text)
+            
+            fd_old, path_old = tempfile.mkstemp(suffix="_old_" + os.path.basename(path), text=True)
+            fd_new, path_new = tempfile.mkstemp(suffix="_new_" + os.path.basename(path), text=True)
+            os.close(fd_old)
+            os.close(fd_new)
+            
+            _write_text_preserving(path_old, old_text, original_newline=nl)
+            _write_text_preserving(path_new, new_text, original_newline=nl)
+            
             try:
                 subprocess.Popen(["meld", path_old, path_new])
                 self.notify("Opened file in Meld.", severity="info")

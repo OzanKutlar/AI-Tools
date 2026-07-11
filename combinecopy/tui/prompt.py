@@ -98,10 +98,9 @@ class SystemPromptApp(App):
         thread = threading.Thread(target=self._editor_worker, args=(current_text,), daemon=True)
         thread.start()
         self.notify("Waiting for external editor to close...", severity="info")
-        
     def _editor_worker(self, current_text: str) -> None:
         fd, temp_path = tempfile.mkstemp(suffix=".txt", text=True)
-        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+        with os.fdopen(fd, 'w', encoding='utf-8', newline='') as f:
             f.write(current_text)
             
         npp_path = shutil.which("notepad++") or shutil.which("notepad++.exe")
