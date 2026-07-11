@@ -53,7 +53,6 @@ def _write_text_preserving(path: str, text: str, original_newline: str | None = 
         f.write(text)
 from combinecopy.prompts import build_prompt
 from combinecopy.vcs_tfs import tfs_checkout, tfs_add, tfs_delete, tfs_checkin
-
 class RehabScreen(ModalScreen[bool]):
     CSS = """
     RehabScreen {
@@ -61,8 +60,8 @@ class RehabScreen(ModalScreen[bool]):
         background: rgba(0, 0, 0, 0.8);
     }
     #rehab-dialog {
-        width: 90%;
-        height: 90%;
+        width: 95%;
+        height: 95%;
         border: solid #d08c60;
         background: #2d2825;
         padding: 1 2;
@@ -75,13 +74,31 @@ class RehabScreen(ModalScreen[bool]):
         background: #4a3f39;
         padding: 1;
     }
-    #rehab-instructions {
+    #rehab-body {
         height: 1fr;
-        border: solid #5a4d45;
-        background: #1e1a18;
-        padding: 1;
+    }
+    #rehab-left {
+        width: 50%;
+        border-right: solid #5a4d45;
+        padding-right: 1;
         overflow-y: auto;
-        margin-bottom: 1;
+    }
+    #rehab-right {
+        width: 50%;
+        padding-left: 1;
+    }
+    #rehab-instructions {
+        height: auto;
+    }
+    #rehab-solution-container {
+        height: 1fr;
+    }
+    #rehab-hidden-msg {
+        height: 1fr;
+        content-align: center middle;
+        color: #a0a0a0;
+        border: dashed #5a4d45;
+        padding: 2;
     }
     #rehab-solution {
         height: 1fr;
@@ -90,7 +107,6 @@ class RehabScreen(ModalScreen[bool]):
         padding: 1;
         overflow-y: auto;
         display: none;
-        margin-bottom: 1;
     }
     #rehab-footer {
         height: 3;
@@ -118,12 +134,30 @@ class RehabScreen(ModalScreen[bool]):
         self.full_path = os.path.join(self.root_dir, self.file_path)
         self._solution_loaded = False
         self.filename = os.path.basename(self.file_path)
+        
+        fd, self.temp_human_path = tempfile.mkstemp(suffix=f"_HUMAN_{self.filename}", text=True)
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(self.original_text)
+
+    def on_unmount(self) -> None:
+        try:
+            if os.path.exists(self.temp_human_path):
+                os.remove(self.temp_human_path)
+        except:
+            pass
 
     def compose(self) -> ComposeResult:
         with Vertical(id="rehab-dialog"):
             yield Label(f"Rehab Mode: {self.file_path}", classes="rehab-title")
-            yield Markdown(self._build_instructions_md(), id="rehab-instructions")
-            yield RichLog(id="rehab-solution", highlight=True)
+            with Horizontal(id="rehab-body"):
+                with Vertical(id="rehab-left"):
+                    yield Label("Instructions", classes="panel-title")
+                    yield Markdown(self._build_instructions_md(), id="rehab-instructions")
+                with Vertical(id="rehab-right"):
+                    yield Label("AI Solution", classes="panel-title")
+                    with Vertical(id="rehab-solution-container"):
+                        yield Label("Solution is hidden to encourage active recall.\n\nPress 'r' or click 'Reveal AI Code' to view the AI's exact changes.", id="rehab-hidden-msg")
+                        yield RichLog(id="rehab-solution", highlight=True)
             with Horizontal(id="rehab-footer"):
                 yield Button("Open in Editor (o)", id="btn-editor", variant="primary")
                 yield Button("Verify in Meld (m)", id="btn-meld", variant="success")
@@ -155,12 +189,7 @@ class RehabScreen(ModalScreen[bool]):
 
     def action_cancel(self) -> None:
         self.dismiss(False)
-
     def action_open_editor(self) -> None:
-        if not os.path.exists(self.full_path):
-            os.makedirs(os.path.dirname(self.full_path), exist_ok=True)
-            with open(self.full_path, "w", encoding="utf-8") as f: f.write("")
-        
         line_num = 1
         blocks = self.file_obj.get("search_replace", [])
         if blocks:
@@ -179,13 +208,13 @@ class RehabScreen(ModalScreen[bool]):
         
         try:
             if npp_path:
-                subprocess.Popen([npp_path, f"-n{line_num}", self.full_path])
+                subprocess.Popen([npp_path, f"-n{line_num}", self.temp_human_path])
             elif os.name == 'nt':
-                subprocess.Popen(["notepad", self.full_path])
+                subprocess.Popen(["notepad", self.temp_human_path])
             else:
                 cmd = "xdg-open" if sys.platform.startswith("linux") else "open"
-                subprocess.Popen([cmd, self.full_path])
-            self.notify("Editor opened. Edit the file, save, then Verify in Meld.", severity="info")
+                subprocess.Popen([cmd, self.temp_human_path])
+            self.notify("Editor opened. Edit your copy, save, then Verify in Meld.", severity="info")
         except Exception as e:
             self.notify(f"Failed to open editor: {e}", severity="error")
 
@@ -193,17 +222,14 @@ class RehabScreen(ModalScreen[bool]):
         self.run_worker(self._run_meld, exclusive=True)
 
     async def _run_meld(self) -> None:
-        human_text = safe_read_file(self.full_path) if os.path.exists(self.full_path) else ""
         ai_text = compute_new_text(self.file_obj, self.original_text)
 
         base_name = os.path.basename(self.file_path)
         fd_ai, path_ai = tempfile.mkstemp(suffix=f"_AI_{base_name}", text=True)
         fd_merge, path_merge = tempfile.mkstemp(suffix=f"_MERGED_{base_name}", text=True)
-        fd_human, path_human = tempfile.mkstemp(suffix=f"_HUMAN_{base_name}", text=True)
 
         with os.fdopen(fd_ai, 'w', encoding='utf-8') as f: f.write(ai_text)
-        with os.fdopen(fd_merge, 'w', encoding='utf-8') as f: f.write(human_text)
-        with os.fdopen(fd_human, 'w', encoding='utf-8') as f: f.write(human_text)
+        with os.fdopen(fd_merge, 'w', encoding='utf-8') as f: f.write(self.original_text)
 
         try:
             meld_exe = shutil.which("meld") or shutil.which("meld.exe")
@@ -216,8 +242,8 @@ class RehabScreen(ModalScreen[bool]):
                     self.notify("Meld not found! Please install Meld and add it to PATH.", severity="error")
                     return
 
-            self.notify("Launching Meld... Please resolve changes and close Meld when done.", severity="info")
-            process = await asyncio.create_subprocess_exec(meld_exe, path_ai, path_merge, path_human)
+            self.notify("Launching Meld... Center panel is the target output. Save and close when done.", severity="info")
+            process = await asyncio.create_subprocess_exec(meld_exe, path_ai, path_merge, self.temp_human_path)
             await process.wait()
 
             with open(path_merge, 'r', encoding='utf-8') as f:
@@ -239,14 +265,16 @@ class RehabScreen(ModalScreen[bool]):
         except Exception as e:
             self.notify(f"Failed to run Meld: {e}", severity="error")
         finally:
-            for p in [path_ai, path_merge, path_human]:
+            for p in [path_ai, path_merge]:
                 try: os.remove(p)
                 except: pass
 
     def action_reveal_solution(self) -> None:
         log = self.query_one("#rehab-solution", RichLog)
+        msg = self.query_one("#rehab-hidden-msg", Label)
         if log.styles.display == "none":
             log.styles.display = "block"
+            msg.styles.display = "none"
             if not self._solution_loaded:
                 action = self.file_obj.get("action", "modify").upper()
                 if action == "CREATE":
@@ -258,6 +286,7 @@ class RehabScreen(ModalScreen[bool]):
                 self._solution_loaded = True
         else:
             log.styles.display = "none"
+            msg.styles.display = "block"
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         btn_id = event.button.id
