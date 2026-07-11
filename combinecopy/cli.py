@@ -606,25 +606,25 @@ def main():
                         
                     file_context_str = "\n".join(file_context_buffer)
                     full_text = ""
-                            if batch_count == 1:
-                                if user_request_data:
-                                    full_text = build_prompt(
-                                        user_request=user_request_data["request"],
-                                        file_context=file_context_str,
-                                        ast_map=generate_tree_string(found_files, root_dir) if args.file_culling else "",
-                                        file_cull=args.file_culling,
-                                        system_prompt=user_request_data["system"],
-                                        agent_type=agent_type,
-                                        xml_mode=args.xml,
-                                        consult=args.consult,
-                                        custom_rules=custom_rules,
-                                        git_diff=git_diff_text,
-                                        rehab=args.rehab
-                                    )
-                                else:
+                    if batch_count == 1:
+                        if user_request_data:
+                            full_text = build_prompt(
+                                user_request=user_request_data["request"],
+                                file_context=file_context_str,
+                                ast_map=generate_tree_string(found_files, root_dir) if args.file_culling else "",
+                                file_cull=args.file_culling,
+                                system_prompt=user_request_data["system"],
+                                agent_type=agent_type,
+                                xml_mode=args.xml,
+                                consult=args.consult,
+                                custom_rules=custom_rules,
+                                git_diff=git_diff_text,
+                                rehab=args.rehab
+                            )
+                        else:
                             full_text = file_context_str
-                            if git_diff_text:
-                                full_text += f"\n\n{get_git_diff(git_diff_text)}"
+                    if git_diff_text:
+                        full_text += f"\n\n{get_git_diff(git_diff_text)}"
                     else:
                         parts = []
                         if batch_num == 1 and user_request_data:
