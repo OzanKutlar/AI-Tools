@@ -563,6 +563,29 @@ Output the payload wrapped in a markdown code block:
 
 def get_prune(xml_mode: bool = False) -> str:
     return PRUNE_XML if xml_mode else PRUNE_DEFAULT
+REHAB_DEFAULT = r"""<rehab_mode>
+The user is currently in REHAB MODE to practice their coding skills.
+In your EXECUTION payload, for every `search_replace` block, you MUST add an `"instruction"` key before the `"search"` key.
+The `"instruction"` must be a plain-English explanation of the logical changes being made (e.g., "Refactor this loop to use a dictionary lookup for O(1) time complexity"). Do NOT write code in the instruction. The user will read this instruction and attempt to write the code themselves.
+Example:
+{
+  "instruction": "Convert the list comprehension to a generator expression to save memory.",
+  "search": "...",
+  "replace": "..."
+}
+</rehab_mode>"""
+
+REHAB_XML = r"""<rehab_mode>
+The user is currently in REHAB MODE to practice their coding skills.
+In your EXECUTION payload, for every `<block>` inside `<search_replace>`, you MUST include an `<instruction>` tag.
+The `<instruction>` must be a plain-English explanation of the logical changes being made. Do NOT write code in the instruction. The user will read this instruction and attempt to write the code themselves.
+Example:
+<block>
+  <instruction>Convert the list comprehension to a generator expression to save memory.</instruction>
+  <search><![CDATA[...]]></search>
+  <replace><![CDATA[...]]></replace>
+</block>
+</rehab_mode>"""
 
 def get_consult(xml_mode: bool = False) -> str:
     return CONSULT_XML if xml_mode else CONSULT_DEFAULT
@@ -768,12 +791,14 @@ Output your evaluation JSON using the REVIEW schema block now.
 """
 
 # --- Composition Functions ---
-
-def get_system_prompt(agent_type: str = "default", file_cull: bool = False, xml_mode: bool = False, consult: bool = False, custom_rules: str = "") -> str:
+def get_system_prompt(agent_type: str = "default", file_cull: bool = False, xml_mode: bool = False, consult: bool = False, custom_rules: str = "", rehab: bool = False) -> str:
     parts = []
     parts.append(get_introduction(agent_type))
     parts.append(get_execution(agent_type, xml_mode, consult))  # get_execution already includes planning strings internally
     
+    if rehab:
+        parts.append(REHAB_XML if xml_mode else REHAB_DEFAULT)
+        
     if file_cull:
         parts.append(get_file_cull(xml_mode))
         
@@ -782,7 +807,6 @@ def get_system_prompt(agent_type: str = "default", file_cull: bool = False, xml_
         parts.append(rest_str)
         
     return "\n\n".join(parts)
-
 def build_prompt(
     user_request: str,
     file_context: str,
@@ -793,7 +817,8 @@ def build_prompt(
     xml_mode: bool = False,
     consult: bool = False,
     custom_rules: str = "",
-    git_diff: str = ""
+    git_diff: str = "",
+    rehab: bool = False
 ) -> str:
     parts = []
     
@@ -811,11 +836,10 @@ def build_prompt(
         
     if user_request:
         parts.append(get_user_prompt(user_request))
-        
     if system_prompt:
         parts.append(f"--- SYSTEM INSTRUCTIONS ---\n{system_prompt}")
     else:
-        parts.append(f"--- SYSTEM INSTRUCTIONS ---\n{get_system_prompt(agent_type, file_cull, xml_mode, consult, custom_rules)}")
+        parts.append(f"--- SYSTEM INSTRUCTIONS ---\n{get_system_prompt(agent_type, file_cull, xml_mode, consult, custom_rules, rehab)}")
         
     if user_request:
         parts.append(get_user_prompt(user_request, reminder=True))

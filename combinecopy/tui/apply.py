@@ -24,7 +24,6 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Header, Footer, Label, ListView, ListItem, Button, Static, RichLog, TextArea, Markdown
 from textual.binding import Binding
 from textual.screen import ModalScreen
-
 from combinecopy.utils import (
     safe_read_file,
     intelligent_json_fix,
@@ -36,7 +35,8 @@ from combinecopy.utils import (
     extract_xml_from_text,
     parse_xml_to_dict,
     extract_consult_answers,
-    compute_new_text
+    compute_new_text,
+    find_line_number
 )
 
 def _write_text_preserving(path: str, text: str, original_newline: str | None = None) -> None:
@@ -51,9 +51,224 @@ def _write_text_preserving(path: str, text: str, original_newline: str | None = 
         text = normalized.replace("\n", original_newline)
     with open(path, "w", encoding="utf-8", errors="surrogateescape", newline="") as f:
         f.write(text)
-
 from combinecopy.prompts import build_prompt
 from combinecopy.vcs_tfs import tfs_checkout, tfs_add, tfs_delete, tfs_checkin
+
+class RehabScreen(ModalScreen[bool]):
+    CSS = """
+    RehabScreen {
+        align: center middle;
+        background: rgba(0, 0, 0, 0.8);
+    }
+    #rehab-dialog {
+        width: 90%;
+        height: 90%;
+        border: solid #d08c60;
+        background: #2d2825;
+        padding: 1 2;
+    }
+    .rehab-title {
+        text-align: center;
+        text-style: bold;
+        color: #d08c60;
+        margin-bottom: 1;
+        background: #4a3f39;
+        padding: 1;
+    }
+    #rehab-instructions {
+        height: 1fr;
+        border: solid #5a4d45;
+        background: #1e1a18;
+        padding: 1;
+        overflow-y: auto;
+        margin-bottom: 1;
+    }
+    #rehab-solution {
+        height: 1fr;
+        border: solid #5a4d45;
+        background: #1e1a18;
+        padding: 1;
+        overflow-y: auto;
+        display: none;
+        margin-bottom: 1;
+    }
+    #rehab-footer {
+        height: 3;
+        align: right middle;
+        border-top: solid #5a4d45;
+        margin-top: 1;
+    }
+    Button {
+        margin: 0 1;
+    }
+    """
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel"),
+        Binding("o", "open_editor", "Open in Editor"),
+        Binding("m", "verify_meld", "Verify in Meld"),
+        Binding("r", "reveal_solution", "Reveal AI Solution"),
+    ]
+
+    def __init__(self, file_obj: dict, root_dir: str, original_text: str):
+        super().__init__()
+        self.file_obj = file_obj
+        self.root_dir = root_dir
+        self.original_text = original_text
+        self.file_path = file_obj.get("path", "")
+        self.full_path = os.path.join(self.root_dir, self.file_path)
+        self._solution_loaded = False
+        self.filename = os.path.basename(self.file_path)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="rehab-dialog"):
+            yield Label(f"Rehab Mode: {self.file_path}", classes="rehab-title")
+            yield Markdown(self._build_instructions_md(), id="rehab-instructions")
+            yield RichLog(id="rehab-solution", highlight=True)
+            with Horizontal(id="rehab-footer"):
+                yield Button("Open in Editor (o)", id="btn-editor", variant="primary")
+                yield Button("Verify in Meld (m)", id="btn-meld", variant="success")
+                yield Button("Reveal AI Code (r)", id="btn-reveal", variant="warning")
+                yield Button("Cancel", id="btn-cancel", variant="error")
+
+    def _build_instructions_md(self) -> str:
+        md = []
+        action = self.file_obj.get("action", "modify").upper()
+        if action == "CREATE":
+            md.append("### Create File")
+            md.append(f"**Path:** `{self.file_path}`")
+            if "instruction" in self.file_obj:
+                md.append(f"**Instruction:** {self.file_obj['instruction']}")
+            else:
+                md.append("**Instruction:** Write the entire file based on the context.")
+        else:
+            md.append(f"### Modify File: `{self.file_path}`")
+            blocks = self.file_obj.get("search_replace", [])
+            for i, b in enumerate(blocks):
+                md.append(f"#### Block {i+1}")
+                inst = b.get("instruction", "*(No instruction provided by AI)*")
+                md.append(f"**Task:** {inst}")
+                search_code = b.get("search", "")
+                md.append("\n**Target Code:**")
+                md.append(f"```python\n{search_code}\n```")
+                md.append("---")
+        return "\n".join(md)
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
+
+    def action_open_editor(self) -> None:
+        if not os.path.exists(self.full_path):
+            os.makedirs(os.path.dirname(self.full_path), exist_ok=True)
+            with open(self.full_path, "w", encoding="utf-8") as f: f.write("")
+        
+        line_num = 1
+        blocks = self.file_obj.get("search_replace", [])
+        if blocks:
+            line_num = find_line_number(self.original_text, blocks[0].get("search", ""))
+
+        npp_path = shutil.which("notepad++") or shutil.which("notepad++.exe")
+        if not npp_path:
+            possible_paths = [
+                r"C:\Program Files\Notepad++\notepad++.exe",
+                r"C:\Program Files (x86)\Notepad++\notepad++.exe"
+            ]
+            for p in possible_paths:
+                if os.path.exists(p):
+                    npp_path = p
+                    break
+        
+        try:
+            if npp_path:
+                subprocess.Popen([npp_path, f"-n{line_num}", self.full_path])
+            elif os.name == 'nt':
+                subprocess.Popen(["notepad", self.full_path])
+            else:
+                cmd = "xdg-open" if sys.platform.startswith("linux") else "open"
+                subprocess.Popen([cmd, self.full_path])
+            self.notify("Editor opened. Edit the file, save, then Verify in Meld.", severity="info")
+        except Exception as e:
+            self.notify(f"Failed to open editor: {e}", severity="error")
+
+    def action_verify_meld(self) -> None:
+        self.run_worker(self._run_meld, exclusive=True)
+
+    async def _run_meld(self) -> None:
+        human_text = safe_read_file(self.full_path) if os.path.exists(self.full_path) else ""
+        ai_text = compute_new_text(self.file_obj, self.original_text)
+
+        base_name = os.path.basename(self.file_path)
+        fd_ai, path_ai = tempfile.mkstemp(suffix=f"_AI_{base_name}", text=True)
+        fd_merge, path_merge = tempfile.mkstemp(suffix=f"_MERGED_{base_name}", text=True)
+        fd_human, path_human = tempfile.mkstemp(suffix=f"_HUMAN_{base_name}", text=True)
+
+        with os.fdopen(fd_ai, 'w', encoding='utf-8') as f: f.write(ai_text)
+        with os.fdopen(fd_merge, 'w', encoding='utf-8') as f: f.write(human_text)
+        with os.fdopen(fd_human, 'w', encoding='utf-8') as f: f.write(human_text)
+
+        try:
+            meld_exe = shutil.which("meld") or shutil.which("meld.exe")
+            if not meld_exe:
+                if os.path.exists(r"C:\Program Files (x86)\Meld\Meld.exe"):
+                    meld_exe = r"C:\Program Files (x86)\Meld\Meld.exe"
+                elif os.path.exists(r"C:\Program Files\Meld\Meld.exe"):
+                    meld_exe = r"C:\Program Files\Meld\Meld.exe"
+                else:
+                    self.app.call_from_thread(self.notify, "Meld not found! Please install Meld and add it to PATH.", severity="error")
+                    return
+
+            self.app.call_from_thread(self.notify, "Launching Meld... Please resolve changes and close Meld when done.", severity="info")
+            process = await asyncio.create_subprocess_exec(meld_exe, path_ai, path_merge, path_human)
+            await process.wait()
+
+            with open(path_merge, 'r', encoding='utf-8') as f:
+                final_text = f.read()
+
+            original_newline = detect_newline(self.full_path) if os.path.exists(self.full_path) else "\n"
+            _write_text_preserving(self.full_path, final_text, original_newline=original_newline)
+            
+            old_lines = self.original_text.splitlines(keepends=True)
+            new_lines = final_text.splitlines(keepends=True)
+            diff = list(difflib.unified_diff(old_lines, new_lines, n=0))
+            added = sum(1 for line in diff if line.startswith('+') and not line.startswith('+++'))
+            removed = sum(1 for line in diff if line.startswith('-') and not line.startswith('---'))
+            self.file_obj["_added"] = added
+            self.file_obj["_removed"] = removed
+            
+            self.app.call_from_thread(self.dismiss, True)
+
+        except Exception as e:
+            self.app.call_from_thread(self.notify, f"Failed to run Meld: {e}", severity="error")
+        finally:
+            for p in [path_ai, path_merge, path_human]:
+                try: os.remove(p)
+                except: pass
+
+    def action_reveal_solution(self) -> None:
+        log = self.query_one("#rehab-solution", RichLog)
+        if log.styles.display == "none":
+            log.styles.display = "block"
+            if not self._solution_loaded:
+                action = self.file_obj.get("action", "modify").upper()
+                if action == "CREATE":
+                    log.write(self.file_obj.get("content", ""))
+                else:
+                    for i, b in enumerate(self.file_obj.get("search_replace", [])):
+                        log.write(f"--- BLOCK {i+1} REPLACEMENT ---")
+                        log.write(b.get("replace", ""))
+                self._solution_loaded = True
+        else:
+            log.styles.display = "none"
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        btn_id = event.button.id
+        if btn_id == "btn-editor":
+            self.action_open_editor()
+        elif btn_id == "btn-meld":
+            self.action_verify_meld()
+        elif btn_id == "btn-reveal":
+            self.action_reveal_solution()
+        elif btn_id == "btn-cancel":
+            self.action_cancel()
 
 class CommandExecutionScreen(ModalScreen[bool]):
     CSS = """
@@ -1300,8 +1515,7 @@ class AutoAgentApp(App):
         Binding("f", "fix_json", "Fix JSON"),
     ]
     TITLE = "CombineCopy — Auto Agent Listener"
-
-    def __init__(self, root_dir: str, known_files: list[str] | None = None, revert_mode: bool = False, ignore_initial_clipboard: bool = False, web_mode: bool = False, tfs_mode: bool = False, xml_mode: bool = False, consult_mode: bool = False):
+    def __init__(self, root_dir: str, known_files: list[str] | None = None, revert_mode: bool = False, ignore_initial_clipboard: bool = False, web_mode: bool = False, tfs_mode: bool = False, xml_mode: bool = False, consult_mode: bool = False, rehab_mode: bool = False):
         super().__init__()
         self.root_dir = root_dir
         self.known_files = known_files or []
@@ -1310,6 +1524,7 @@ class AutoAgentApp(App):
         self.tfs_mode = tfs_mode
         self.xml_mode = xml_mode
         self.consult_mode = consult_mode
+        self.rehab_mode = rehab_mode
         self.is_consulting = False
         self.ignore_initial_clipboard = ignore_initial_clipboard
         self.last_clipboard = ""
@@ -1325,6 +1540,8 @@ class AutoAgentApp(App):
             self.title = "CombineCopy — Auto Agent Listener (WEB MACRO MODE)"
         if self.tfs_mode:
             self.title = "CombineCopy — Auto Agent Listener (TFS MODE)"
+        if self.rehab_mode:
+            self.title = "CombineCopy — Auto Agent Listener (REHAB MODE)"
 
     def action_reload(self) -> None:
         self.last_clipboard = ""
@@ -1876,7 +2093,6 @@ class AutoAgentApp(App):
         has_applied = any(f.get("_status") == "applied" for f in files)
         if not has_pending and not has_applied:
             self.reset_state()
-
     def action_apply_file(self) -> None:
         btn = self.query_one("#btn-apply-file", Button)
         if not btn.disabled:
@@ -1888,17 +2104,31 @@ class AutoAgentApp(App):
                         CommandExecutionScreen(file_obj.get("command", ""), self.root_dir),
                         callback=lambda success: self.on_command_done(file_list.index, success)
                     )
+                elif getattr(self, 'rehab_mode', False):
+                    full_path = os.path.join(self.root_dir, file_obj["path"])
+                    old_text = safe_read_file(full_path) if os.path.exists(full_path) else ""
+                    self.app.push_screen(
+                        RehabScreen(file_obj, self.root_dir, old_text),
+                        callback=lambda success: self.on_rehab_done(file_list.index, success)
+                    )
                 elif self.web_mode:
                     self.app.push_screen(MacroScreen(self.payload, [file_list.index]), self.on_macro_done)
                 else:
                     self._apply_single_file(file_list.index)
                     self.refresh_file_list()
-
     def on_command_done(self, idx: int, success: bool) -> None:
         self.payload["files"][idx]["_status"] = "applied"
         self._record_applied_file(self.payload["files"][idx])
         self.refresh_file_list()
         self._check_auto_reset()
+
+    def on_rehab_done(self, idx: int, success: bool) -> None:
+        if success:
+            file_obj = self.payload["files"][idx]
+            file_obj["_status"] = "applied"
+            self._record_applied_file(file_obj)
+            self.refresh_file_list()
+            self._check_auto_reset()
 
     def action_partial_add(self) -> None:
         btn = self.query_one("#btn-partial-add", Button)
@@ -1954,7 +2184,6 @@ class AutoAgentApp(App):
             self.refresh_file_list()
             self._check_auto_reset()
             return
-        
         idx = indices.pop(0)
         file_obj = self.payload["files"][idx]
         if file_obj.get("action", "").upper() == "COMMAND":
@@ -1962,6 +2191,15 @@ class AutoAgentApp(App):
                 CommandExecutionScreen(file_obj.get("command", ""), self.root_dir),
                 callback=lambda success: self._on_apply_all_command_done(idx, success, indices)
             )
+        elif getattr(self, 'rehab_mode', False):
+            full_path = os.path.join(self.root_dir, file_obj["path"])
+            old_text = safe_read_file(full_path) if os.path.exists(full_path) else ""
+            def callback(success):
+                if success:
+                    self.payload["files"][idx]["_status"] = "applied"
+                    self._record_applied_file(self.payload["files"][idx])
+                self._apply_next_pending(indices)
+            self.app.push_screen(RehabScreen(file_obj, self.root_dir, old_text), callback=callback)
         else:
             self._apply_single_file(idx)
             self._apply_next_pending(indices)
@@ -2312,8 +2550,7 @@ class AutoAgentApp(App):
             self.exit(summary_data)
         else:
             self.exit(None)
-
-def run_auto_agent(root_dir: str, known_files: list[str] | None = None, revert_mode: bool = False, ignore_initial_clipboard: bool = False, web_mode: bool = False, xml_mode: bool = False, consult_mode: bool = False):
+def run_auto_agent(root_dir: str, known_files: list[str] | None = None, revert_mode: bool = False, ignore_initial_clipboard: bool = False, web_mode: bool = False, xml_mode: bool = False, consult_mode: bool = False, rehab_mode: bool = False):
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -2333,7 +2570,8 @@ def run_auto_agent(root_dir: str, known_files: list[str] | None = None, revert_m
                 "ignore_initial_clipboard": ignore_initial_clipboard,
                 "web_mode": web_mode,
                 "xml_mode": xml_mode,
-                "consult_mode": consult_mode
+                "consult_mode": consult_mode,
+                "rehab_mode": rehab_mode
             }
             with open(in_name, "w", encoding="utf-8") as f:
                 json.dump(args_dict, f)
@@ -2355,7 +2593,7 @@ def run_auto_agent(root_dir: str, known_files: list[str] | None = None, revert_m
                 except Exception:
                     pass
     else:
-        app = AutoAgentApp(root_dir, known_files, revert_mode, ignore_initial_clipboard, web_mode, xml_mode=xml_mode, consult_mode=consult_mode)
+        app = AutoAgentApp(root_dir, known_files, revert_mode, ignore_initial_clipboard, web_mode, xml_mode=xml_mode, consult_mode=consult_mode, rehab_mode=rehab_mode)
         return app.run()
 
 if __name__ == "__main__":
@@ -2365,7 +2603,6 @@ if __name__ == "__main__":
         
         with open(in_path, "r", encoding="utf-8") as f_in:
             args_dict = json.load(f_in)
-            
         app = AutoAgentApp(
             root_dir=args_dict.get("root_dir"),
             known_files=args_dict.get("known_files"),
@@ -2373,7 +2610,8 @@ if __name__ == "__main__":
             ignore_initial_clipboard=args_dict.get("ignore_initial_clipboard", False),
             web_mode=args_dict.get("web_mode", False),
             xml_mode=args_dict.get("xml_mode", False),
-            consult_mode=args_dict.get("consult_mode", False)
+            consult_mode=args_dict.get("consult_mode", False),
+            rehab_mode=args_dict.get("rehab_mode", False)
         )
         res = app.run()
         

@@ -312,6 +312,24 @@ def extract_xml_from_text(text: str) -> list[str]:
     if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
         results.append(text[start_idx:end_idx+22])
     return results
+def find_line_number(full_text: str, search_text: str) -> int:
+    """Finds the 1-based line number of the target block for editor launching."""
+    if not search_text: return 1
+    idx = full_text.find(search_text)
+    if idx != -1:
+        return full_text.count('\n', 0, idx) + 1
+    
+    norm_search = "\n".join(l.strip() for l in search_text.strip().split('\n') if l.strip())
+    source_lines = full_text.split('\n')
+    for i in range(len(source_lines)):
+        for j in range(i, len(source_lines)):
+            window = '\n'.join(source_lines[i : j + 1])
+            nw = "\n".join(l.strip() for l in window.strip().split('\n') if l.strip())
+            if nw == norm_search:
+                return i + 1
+            elif len(nw) > len(norm_search):
+                break
+    return 1
 
 def parse_xml_to_dict(xml_str: str) -> dict:
     """Parses the strict <antigravity_payload> schema back into the equivalent JSON dict format."""
@@ -350,10 +368,13 @@ def parse_xml_to_dict(xml_str: str) -> dict:
                 f_obj["path"] = get_tag_val(file_chunk, "path")
                 cmd = get_tag_val(file_chunk, "command")
                 if cmd: f_obj["command"] = cmd
-                
                 content = get_tag_val(file_chunk, "content")
                 if content is not None:
                     f_obj["content"] = content
+                
+                inst = get_tag_val(file_chunk, "instruction")
+                if inst is not None:
+                    f_obj["instruction"] = inst
                 
                 sr_m = re.search(r'<search_replace>(.*?)</search_replace>', file_chunk, re.DOTALL)
                 if sr_m:
@@ -361,8 +382,14 @@ def parse_xml_to_dict(xml_str: str) -> dict:
                     for block in re.findall(r'<block>(.*?)</block>', sr_m.group(1), re.DOTALL):
                         s = get_tag_val(block, "search")
                         r = get_tag_val(block, "replace")
+                        i = get_tag_val(block, "instruction")
+                        blk = {}
+                        if i is not None:
+                            blk["instruction"] = i
                         if s is not None and r is not None:
-                            sr_blocks.append({"search": s, "replace": r})
+                            blk["search"] = s
+                            blk["replace"] = r
+                            sr_blocks.append(blk)
                     if sr_blocks:
                         f_obj["search_replace"] = sr_blocks
                         

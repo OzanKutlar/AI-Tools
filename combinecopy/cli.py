@@ -87,6 +87,7 @@ def main():
     parser.add_argument("-e", "--exclude", nargs='+', default=None, help="Directory names to exclude from scan (separated by space)")
     parser.add_argument("-s", "--select", action="store_true", help="Open TUI to pick files interactively")
     parser.add_argument("-a", "--auto", action="store_true", help="Run in continuous AI listener mode")
+    parser.add_argument("--rehab", action="store_true", help="Enable Rehab Mode to manually type AI suggestions with Meld verification.")
     parser.add_argument("-r", "--revert", action="store_true", help="Run in continuous AI listener mode but reverse all changes")
     parser.add_argument("-o", "--orchestrate", action="store_true", help="Run in orchestrator mode to generate a precise execution plan and prompt.")
     parser.add_argument("--cli", action="store_true", help="Enable CLI Mode. Allows the AI to output terminal commands to be executed.")
@@ -111,10 +112,9 @@ def main():
                 custom_rules = f.read().strip()
         except Exception as e:
             console.print(f"[dim yellow]Warning: Could not read .ccrules file: {e}[/dim yellow]")
-
     if args.system_only:
         agent_type = "orchestrator" if args.orchestrate else "cli" if args.cli else "default"
-        sys_prompt = get_system_prompt(agent_type=agent_type, file_cull=args.file_culling, xml_mode=args.xml, consult=args.consult, custom_rules=custom_rules)
+        sys_prompt = get_system_prompt(agent_type=agent_type, file_cull=args.file_culling, xml_mode=args.xml, consult=args.consult, custom_rules=custom_rules, rehab=args.rehab)
         important = get_system_prompt_important(agent_type=agent_type, xml_mode=args.xml)
         
         full_sys_prompt = f"--- SYSTEM INSTRUCTIONS ---\n{sys_prompt}\n\n{important}"
@@ -177,7 +177,7 @@ def main():
                 console.print(Panel("Orchestrator payload successfully copied to clipboard.", title="Success", style="bold green"))
             return
         else:
-            app = AutoAgentApp(root_dir, revert_mode=args.revert, web_mode=args.web, tfs_mode=args.tfs, xml_mode=args.xml, consult_mode=args.consult)
+            app = AutoAgentApp(root_dir, revert_mode=args.revert, web_mode=args.web, tfs_mode=args.tfs, xml_mode=args.xml, consult_mode=args.consult, rehab_mode=args.rehab)
             result = app.run()
             if result:
                 print_auto_summary(result)
@@ -479,7 +479,7 @@ def main():
             console.print("[bold cyan]Phase: Instruction & System Prompt[/bold cyan]")
             sys_arg = args.system if args.system else 'DEFAULT'
             if sys_arg == 'DEFAULT' or sys_arg == '':
-                sys_prompt_text = get_system_prompt(agent_type=agent_type, file_cull=args.file_culling, xml_mode=args.xml, consult=args.consult, custom_rules=custom_rules)
+                sys_prompt_text = get_system_prompt(agent_type=agent_type, file_cull=args.file_culling, xml_mode=args.xml, consult=args.consult, custom_rules=custom_rules, rehab=args.rehab)
             else:
                 try:
                     with open(sys_arg, 'r', encoding='utf-8') as f:
@@ -606,22 +606,22 @@ def main():
                         
                     file_context_str = "\n".join(file_context_buffer)
                     full_text = ""
-                    
-                    if batch_count == 1:
-                        if user_request_data:
-                            full_text = build_prompt(
-                                user_request=user_request_data["request"],
-                                file_context=file_context_str,
-                                ast_map=generate_tree_string(found_files, root_dir) if args.file_culling else "",
-                                file_cull=args.file_culling,
-                                system_prompt=user_request_data["system"],
-                                agent_type=agent_type,
-                                xml_mode=args.xml,
-                                consult=args.consult,
-                                custom_rules=custom_rules,
-                                git_diff=git_diff_text
-                            )
-                        else:
+                            if batch_count == 1:
+                                if user_request_data:
+                                    full_text = build_prompt(
+                                        user_request=user_request_data["request"],
+                                        file_context=file_context_str,
+                                        ast_map=generate_tree_string(found_files, root_dir) if args.file_culling else "",
+                                        file_cull=args.file_culling,
+                                        system_prompt=user_request_data["system"],
+                                        agent_type=agent_type,
+                                        xml_mode=args.xml,
+                                        consult=args.consult,
+                                        custom_rules=custom_rules,
+                                        git_diff=git_diff_text,
+                                        rehab=args.rehab
+                                    )
+                                else:
                             full_text = file_context_str
                             if git_diff_text:
                                 full_text += f"\n\n{get_git_diff(git_diff_text)}"
@@ -703,7 +703,7 @@ def main():
             if args.web_apply:
                 phase_name += " [WEB MACRO MODE]"
             console.print(f"\n[bold cyan]Phase: {phase_name}[/bold cyan]")
-            app = AutoAgentApp(root_dir, all_known_files, revert_mode=args.revert, ignore_initial_clipboard=True, web_mode=args.web_apply, tfs_mode=args.tfs, xml_mode=args.xml, consult_mode=args.consult)
+            app = AutoAgentApp(root_dir, all_known_files, revert_mode=args.revert, ignore_initial_clipboard=True, web_mode=args.web_apply, tfs_mode=args.tfs, xml_mode=args.xml, consult_mode=args.consult, rehab_mode=args.rehab)
             result = app.run()
             if result:
                 print_auto_summary(result)
