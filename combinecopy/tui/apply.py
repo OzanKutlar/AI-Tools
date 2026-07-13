@@ -123,8 +123,8 @@ class RehabScreen(ModalScreen[bool]):
         Binding("o", "open_editor", "Open in Editor"),
         Binding("m", "verify_meld", "Verify in Meld"),
         Binding("r", "reveal_solution", "Reveal AI Solution"),
+        Binding("h", "show_hint", "Show Hint"),
     ]
-
     def __init__(self, file_obj: dict, root_dir: str, original_text: str):
         super().__init__()
         self.file_obj = file_obj
@@ -134,6 +134,16 @@ class RehabScreen(ModalScreen[bool]):
         self.full_path = os.path.join(self.root_dir, self.file_path)
         self._solution_loaded = False
         self.filename = os.path.basename(self.file_path)
+        self.all_hints = []
+        self.revealed_hints = 0
+        
+        action = self.file_obj.get("action", "modify").upper()
+        if action == "CREATE":
+            self.all_hints.extend(self.file_obj.get("hints", []))
+        else:
+            for b in self.file_obj.get("search_replace", []):
+                self.all_hints.extend(b.get("hints", []))
+                
         self.original_newline = detect_newline(self.full_path) if os.path.exists(self.full_path) else "\n"
         if not self.original_newline:
             self.original_newline = "\n"
@@ -164,6 +174,7 @@ class RehabScreen(ModalScreen[bool]):
             with Horizontal(id="rehab-footer"):
                 yield Button("Open in Editor (o)", id="btn-editor", variant="primary")
                 yield Button("Verify in Meld (m)", id="btn-meld", variant="success")
+                yield Button("Hint (h)", id="btn-hint", variant="default", disabled=len(self.all_hints) == 0)
                 yield Button("Reveal AI Code (r)", id="btn-reveal", variant="warning")
                 yield Button("Cancel", id="btn-cancel", variant="error")
 
@@ -188,10 +199,22 @@ class RehabScreen(ModalScreen[bool]):
                 md.append("\n**Target Code:**")
                 md.append(f"```python\n{search_code}\n```")
                 md.append("---")
+                
+        if self.revealed_hints > 0:
+            md.append("\n### Hints")
+            for i in range(self.revealed_hints):
+                md.append(f"{i+1}. {self.all_hints[i]}")
+                
         return "\n".join(md)
-
     def action_cancel(self) -> None:
         self.dismiss(False)
+
+    def action_show_hint(self) -> None:
+        if self.revealed_hints < len(self.all_hints):
+            self.revealed_hints += 1
+            self.query_one("#rehab-instructions", Markdown).update(self._build_instructions_md())
+            if self.revealed_hints >= len(self.all_hints):
+                self.query_one("#btn-hint", Button).disabled = True
     def action_open_editor(self) -> None:
         line_num = 1
         blocks = self.file_obj.get("search_replace", [])
@@ -298,6 +321,8 @@ class RehabScreen(ModalScreen[bool]):
             self.action_verify_meld()
         elif btn_id == "btn-reveal":
             self.action_reveal_solution()
+        elif btn_id == "btn-hint":
+            self.action_show_hint()
         elif btn_id == "btn-cancel":
             self.action_cancel()
 
@@ -1534,6 +1559,7 @@ class AutoAgentApp(App):
     BINDINGS = [
         Binding("escape", "quit", "Quit"),
         Binding("a", "apply_file", "Apply File"),
+        Binding("t", "practice", "Practice (Rehab)"),
         Binding("p", "partial_add", "Partial Add"),
         Binding("A", "apply_all", "Apply All"),
         Binding("c", "commit", "Commit"),
@@ -1594,6 +1620,7 @@ class AutoAgentApp(App):
                     yield Button("Fix JSON (f)", id="btn-fix-json", variant="warning", disabled=True)
                 with Horizontal(classes="action-row", id="file-action-bar"):
                     yield Button("Apply File (a)", id="btn-apply-file", variant="success", disabled=True)
+                    yield Button("Practice (t)", id="btn-practice", variant="primary", disabled=True)
                     yield Button("Partial Add (p)", id="btn-partial-add", variant="warning", disabled=True)
                     yield Button("Discard File (d)", id="btn-discard-file", variant="error", disabled=True)
                     yield Button("Human Correct (h)", id="btn-human-correct", variant="warning", disabled=True)
@@ -1948,6 +1975,8 @@ class AutoAgentApp(App):
         self.query_one("#btn-commit", Button).disabled = True
         self.query_one("#btn-apply-file", Button).disabled = True
         self.query_one("#btn-discard-file", Button).disabled = True
+        if self.query("Button#btn-practice"):
+            self.query_one("#btn-practice", Button).disabled = True
         if self.query("Button#btn-partial-add"):
             self.query_one("#btn-partial-add", Button).disabled = True
         if self.query("Button#btn-human-correct"):
@@ -2014,9 +2043,11 @@ class AutoAgentApp(App):
             selected_file = files[file_list.index]
             is_pending = selected_file.get("_status") == "pending"
             action = selected_file.get("action", "").upper()
-            
             self.query_one("#btn-apply-file", Button).disabled = not is_pending
             
+            if self.query("Button#btn-practice"):
+                self.query_one("#btn-practice", Button).disabled = not is_pending or action == "COMMAND"
+                
             if action == "COMMAND":
                 if self.query("Button#btn-partial-add"):
                     self.query_one("#btn-partial-add", Button).disabled = True
@@ -2040,6 +2071,8 @@ class AutoAgentApp(App):
             self.query_one("#btn-discard-file", Button).disabled = not is_pending
         else:
             self.query_one("#btn-apply-file", Button).disabled = True
+            if self.query("Button#btn-practice"):
+                self.query_one("#btn-practice", Button).disabled = True
             if self.query("Button#btn-partial-add"):
                 self.query_one("#btn-partial-add", Button).disabled = True
             self.query_one("#btn-discard-file", Button).disabled = True
@@ -2124,6 +2157,19 @@ class AutoAgentApp(App):
         has_applied = any(f.get("_status") == "applied" for f in files)
         if not has_pending and not has_applied:
             self.reset_state()
+    def action_practice(self) -> None:
+        btn = self.query_one("#btn-practice", Button)
+        if not btn.disabled:
+            file_list = self.query_one("#file-list", ListView)
+            if file_list.index is not None:
+                file_obj = self.payload["files"][file_list.index]
+                full_path = os.path.join(self.root_dir, file_obj["path"])
+                old_text = safe_read_file(full_path) if os.path.exists(full_path) else ""
+                self.app.push_screen(
+                    RehabScreen(file_obj, self.root_dir, old_text),
+                    callback=lambda success: self.on_rehab_done(file_list.index, success)
+                )
+
     def action_apply_file(self) -> None:
         btn = self.query_one("#btn-apply-file", Button)
         if not btn.disabled:
@@ -2424,6 +2470,8 @@ class AutoAgentApp(App):
             self.action_discard_file()
         elif btn_id == "btn-apply-file":
             self.action_apply_file()
+        elif btn_id == "btn-practice":
+            self.action_practice()
         elif btn_id == "btn-partial-add":
             self.action_partial_add()
         elif btn_id == "btn-commit":

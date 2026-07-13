@@ -565,23 +565,26 @@ def get_prune(xml_mode: bool = False) -> str:
     return PRUNE_XML if xml_mode else PRUNE_DEFAULT
 REHAB_DEFAULT = r"""<rehab_mode>
 The user is currently in REHAB MODE to practice their coding skills.
-In your EXECUTION payload, for every `search_replace` block, you MUST add an `"instruction"` key before the `"search"` key.
+In your EXECUTION payload, for every `search_replace` block (or file `content` for creations), you MUST add an `"instruction"` key before the `"search"` key, and an optional `"hints"` array (up to 3 string hints).
 The `"instruction"` must be a plain-English explanation of the logical changes being made (e.g., "Refactor this loop to use a dictionary lookup for O(1) time complexity"). Do NOT write code in the instruction. The user will read this instruction and attempt to write the code themselves.
 Example:
 {
   "instruction": "Convert the list comprehension to a generator expression to save memory.",
+  "hints": ["Think about using parentheses instead of square brackets."],
   "search": "...",
   "replace": "..."
 }
 </rehab_mode>"""
-
 REHAB_XML = r"""<rehab_mode>
 The user is currently in REHAB MODE to practice their coding skills.
-In your EXECUTION payload, for every `<block>` inside `<search_replace>`, you MUST include an `<instruction>` tag.
+In your EXECUTION payload, for every `<block>` inside `<search_replace>` (or `<file>` for creations), you MUST include an `<instruction>` tag, and optionally a `<hints>` block containing `<hint>` tags (up to 3 hints).
 The `<instruction>` must be a plain-English explanation of the logical changes being made. Do NOT write code in the instruction. The user will read this instruction and attempt to write the code themselves.
 Example:
 <block>
   <instruction>Convert the list comprehension to a generator expression to save memory.</instruction>
+  <hints>
+    <hint>Think about using parentheses instead of square brackets.</hint>
+  </hints>
   <search><![CDATA[...]]></search>
   <replace><![CDATA[...]]></replace>
 </block>
