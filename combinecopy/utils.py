@@ -371,10 +371,13 @@ def parse_xml_to_dict(xml_str: str) -> dict:
                 content = get_tag_val(file_chunk, "content")
                 if content is not None:
                     f_obj["content"] = content
-                
                 inst = get_tag_val(file_chunk, "instruction")
                 if inst is not None:
                     f_obj["instruction"] = inst
+                    
+                hints_m = re.search(r'<hints>(.*?)</hints>', file_chunk, re.DOTALL)
+                if hints_m:
+                    f_obj["hints"] = [h.strip() for h in re.findall(r'<hint>(.*?)</hint>', hints_m.group(1), re.DOTALL) if h.strip()]
                 
                 sr_m = re.search(r'<search_replace>(.*?)</search_replace>', file_chunk, re.DOTALL)
                 if sr_m:
@@ -386,6 +389,11 @@ def parse_xml_to_dict(xml_str: str) -> dict:
                         blk = {}
                         if i is not None:
                             blk["instruction"] = i
+                            
+                        b_hints_m = re.search(r'<hints>(.*?)</hints>', block, re.DOTALL)
+                        if b_hints_m:
+                            blk["hints"] = [h.strip() for h in re.findall(r'<hint>(.*?)</hint>', b_hints_m.group(1), re.DOTALL) if h.strip()]
+                            
                         if s is not None and r is not None:
                             blk["search"] = s
                             blk["replace"] = r

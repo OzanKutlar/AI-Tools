@@ -37,8 +37,19 @@ Manual copy-pasting is slow and prone to errors. The execution agent fixes this.
 Instead of letting the AI output the entire file, which eats up precious output tokens and slows down generation, we make the AI execute targeted search-and-replace modifications inside the files. This allows the LLM to efficiently fix problems on its own.
 
 It monitors your clipboard in the background. When it catches a valid JSON or XML instruction payload, it goes to work.
-
 It creates files, modifies code using targeted search-and-replace, and executes CLI commands. You see the diffs on your screen before anything becomes permanent.
+
+### Rehab Mode (Active Learning)
+
+Relying entirely on AI agents to write code can cause your "muscle memory" and problem-solving skills to atrophy. Rehab Mode combats this.
+
+When running in Rehab Mode, the AI explains the *logical intent* behind its modifications in plain English, but the actual code is initially hidden from you.
+1. The tool presents the plain-English instructions and hints to you.
+2. You press a button to open your local editor and attempt to write the code yourself based on the instructions.
+3. You press another button to open Meld, which compares your handwritten code against the AI's intended code.
+4. Once you verify or correct your code, you apply the change.
+
+If you get stuck, you can reveal hints progressively or fully reveal the AI's exact code. You can launch Rehab mode globally with the `--rehab` flag to force the AI to write instructions, or you can invoke it on-the-fly in the standard agent listener by selecting a pending file and pressing `t` (Practice).
 
 ### Orchestration (Experimental)
 
@@ -105,6 +116,7 @@ combineCopy -f gradle kt xml -s -a --system
 | Option | Description | Default | Alias |
 | :--- | :--- | :--- | :--- |
 | `--auto` | Run in continuous AI listener mode, monitoring the clipboard for execution payloads. | false | -a |
+| `--rehab` | Enable Active Learning mode. Forces the AI to emit plain-English instructions and hints, hiding the code until you practice writing it yourself. | false | none |
 | `--revert` | Run the continuous listener mode, but reverse all incoming modifications. | false | -r |
 | `--orchestrate` | Run in orchestrator mode to generate execution plans for downstream models. | false | -o |
 | `--cli` | Enable CLI Mode, allowing the LLM to output terminal commands in its payload. | false | none |
