@@ -233,11 +233,20 @@ def manage_tasks_cli(tasks_data, root_dir, max_depth, ext_filters, exclude_dirs,
             except:
                 console.print("[red]Invalid format. Use 'c <number>'.[/red]")
             continue
-
         try:
             idx = int(ans) - 1
             if 0 <= idx < len(tasks):
                 selected_task = tasks[idx]
+
+                console.print(f"\n[bold cyan]Task Sub-Prompt:[/bold cyan]\n{selected_task.get('sub_prompt', 'No prompt provided.')}")
+                
+                console.print("\n[bold cyan]Requested Files:[/bold cyan]")
+                for f in selected_task.get("files", []):
+                    console.print(f"  - [green]{f}[/green]")
+                for func in selected_task.get("functions", []):
+                    console.print(f"  - [yellow]{func.get('path')} -> {', '.join(func.get('names', []))}[/yellow]")
+                    
+                ans_mod = console.input("\n[bold yellow]Modify requested files? [y/N]: [/bold yellow]").strip().lower()
 
                 sel_data = {
                     "files": selected_task.get("files", []),
@@ -248,6 +257,17 @@ def manage_tasks_cli(tasks_data, root_dir, max_depth, ext_filters, exclude_dirs,
                 if res[0] is None:
                     continue
                 found_files, imp_files, part_files, missing = res
+                
+                if ans_mod in ['y', 'yes']:
+                    from combinecopy.tui.selection import run_file_selector
+                    from combinecopy.utils import get_files_recursive
+                    with console.status("[bold green]Scanning directory structure...[/bold green]", spinner="dots"):
+                        scanned_files = get_files_recursive(root_dir, 0, max_depth, ext_filters, exclude_dirs=exclude_dirs)
+                    selected = run_file_selector(root_dir, scanned_files, ast_mode=True, preselected_files=found_files, preselected_partials=part_files)
+                    if selected is None:
+                        console.print("[bold yellow]Modification cancelled.[/bold yellow]")
+                        continue
+                    found_files, imp_files, part_files = selected
 
                 agent_type = "cli" if getattr(args, 'cli', False) else "default"
                 sys_prompt_text = get_system_prompt(agent_type=agent_type, file_cull=True, xml_mode=args.xml, consult=args.consult, custom_rules=custom_rules, rehab=args.rehab, divide=False)

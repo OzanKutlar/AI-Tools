@@ -144,13 +144,14 @@ class FileSelector(App):
         Binding("escape", "cancel", "Cancel"),
     ]
     TITLE = "CombineCopy — File Selector"
-
-    def __init__(self, root_dir: str, files: list[str], ast_mode: bool = False):
+    def __init__(self, root_dir: str, files: list[str], ast_mode: bool = False, preselected_files: list[str] = None, preselected_partials: dict = None):
         super().__init__()
         self.root_dir = root_dir
         self.all_files = files
         self.search_term = ""
         self.ast_mode = ast_mode
+        self.preselected_files = preselected_files
+        self.preselected_partials = preselected_partials
         self.ignored_paths = load_ignored_paths(root_dir)
 
     def compose(self) -> ComposeResult:
@@ -260,7 +261,6 @@ class FileSelector(App):
                         break
                         
                 default_state = "unchecked" if (is_searching or is_ignored) else "checked"
-
                 if i == len(parts) - 1:
                     # Restore saved state if available
                     file_saved = saved_states.get(file_path)
@@ -268,8 +268,19 @@ class FileSelector(App):
                         file_state = file_saved["state"]
                         file_important = file_saved.get("important", False)
                     else:
-                        file_state = default_state
-                        file_important = False
+                        if self.preselected_files is not None:
+                            if self.preselected_partials and file_path in self.preselected_partials:
+                                file_state = "partial"
+                                file_important = False
+                            elif file_path in self.preselected_files:
+                                file_state = "checked"
+                                file_important = True
+                            else:
+                                file_state = "unchecked"
+                                file_important = False
+                        else:
+                            file_state = default_state
+                            file_important = False
 
                     file_data = {"type": "file", "state": file_state, "important": file_important, "name": part, "path": file_path, "rel_path": path_so_far, "blocks_loaded": False, "is_ignored": is_ignored}
                     
@@ -292,21 +303,36 @@ class FileSelector(App):
                             for idx, b in enumerate(blocks):
                                 block_key = f"{file_path}::{b['name']}"
                                 block_saved = saved_states.get(block_key)
-                                block_state = block_saved["state"] if block_saved else file_state
+                                if block_saved:
+                                    block_state = block_saved["state"]
+                                else:
+                                    if self.preselected_partials and file_path in self.preselected_partials:
+                                        pre_names = [pb["name"] for pb in self.preselected_partials[file_path]]
+                                        block_state = "checked" if b["name"] in pre_names else "unchecked"
+                                    else:
+                                        block_state = file_state
                                 file_node.add_leaf(
                                     self._make_label(b["name"], block_state, "block", False, self.ast_mode, is_ignored),
                                     data={"type": "block", "state": block_state, "file_path": file_path, "block_idx": idx, "name": b["name"], "start": b["start"], "end": b["end"], "is_ignored": is_ignored}
                                 )
 
-                    # Eagerly load blocks if we have saved partial states to restore (e.g., during active search rebuilds)
+                    # Eagerly load blocks if we have saved partial states to restore (e.g., during active search rebuilds) or preselected blocks
                     if self.ast_mode and not file_node.data.get("blocks_loaded"):
                         has_saved_blocks = any(k.startswith(f"{file_path}::") for k in saved_states)
-                        if has_saved_blocks:
+                        has_preselected_blocks = bool(self.preselected_partials and file_path in self.preselected_partials)
+                        if has_saved_blocks or has_preselected_blocks:
                             blocks = get_cached_blocks(file_path, self.root_dir)
                             for idx, b in enumerate(blocks):
                                 block_key = f"{file_path}::{b['name']}"
                                 block_saved = saved_states.get(block_key)
-                                block_state = block_saved["state"] if block_saved else file_state
+                                if block_saved:
+                                    block_state = block_saved["state"]
+                                else:
+                                    if has_preselected_blocks:
+                                        pre_names = [pb["name"] for pb in self.preselected_partials[file_path]]
+                                        block_state = "checked" if b["name"] in pre_names else "unchecked"
+                                    else:
+                                        block_state = file_state
                                 file_node.add_leaf(
                                     self._make_label(b["name"], block_state, "block", False, self.ast_mode, is_ignored),
                                     data={"type": "block", "state": block_state, "file_path": file_path, "block_idx": idx, "name": b["name"], "start": b["start"], "end": b["end"], "is_ignored": is_ignored}
@@ -578,8 +604,7 @@ class FileSelector(App):
 
     def action_cancel(self) -> None:
         self.exit(None)
-
-def run_file_selector(root_dir: str, files: list[str], ast_mode: bool = False):
+def run_file_selector(root_dir: str, files: list[str], ast_mode: bool = False, preselected_files: list[str] = None, preselected_partials: dict = None):
     """Launch the file-selector TUI. Returns selected paths, or None if cancelled."""
     try:
         loop = asyncio.get_running_loop()
@@ -593,8 +618,13 @@ def run_file_selector(root_dir: str, files: list[str], ast_mode: bool = False):
             out_name = f_out.name
             
         try:
+            args_dict = {
+                "files": files,
+                "preselected_files": preselected_files,
+                "preselected_partials": preselected_partials
+            }
             with open(in_name, "w", encoding="utf-8") as f:
-                json.dump(files, f)
+                json.dump(args_dict, f)
                 
             script_path = os.path.abspath(__file__)
             subprocess.run([sys.executable, script_path, root_dir, in_name, out_name, str(ast_mode)], check=True)
@@ -611,9 +641,9 @@ def run_file_selector(root_dir: str, files: list[str], ast_mode: bool = False):
                     os.remove(p)
                 except Exception:
                     pass
-    else:
-        app = FileSelector(root_dir, files, ast_mode=ast_mode)
-        return app.run()
+        else:
+            app = FileSelector(root_dir, files, ast_mode=ast_mode, preselected_files=preselected_files, preselected_partials=preselected_partials)
+            return app.run()
 
 if __name__ == "__main__":
     if len(sys.argv) >= 5:
@@ -623,9 +653,18 @@ if __name__ == "__main__":
         a_mode = sys.argv[4].lower() == "true"
         
         with open(in_path, "r", encoding="utf-8") as f_in:
-            f_list = json.load(f_in)
+            data = json.load(f_in)
             
-        app = FileSelector(r_dir, f_list, ast_mode=a_mode)
+        if isinstance(data, dict):
+            f_list = data.get("files", [])
+            pre_files = data.get("preselected_files")
+            pre_partials = data.get("preselected_partials")
+        else:
+            f_list = data
+            pre_files = None
+            pre_partials = None
+            
+        app = FileSelector(r_dir, f_list, ast_mode=a_mode, preselected_files=pre_files, preselected_partials=pre_partials)
         res = app.run()
         
         with open(out_path, "w", encoding="utf-8") as f_out:
