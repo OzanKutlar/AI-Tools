@@ -406,7 +406,6 @@ def parse_xml_to_dict(xml_str: str) -> dict:
                         
                 files.append(f_obj)
             data["files"] = files
-            
     # Handle SELECT functions
     funcs_m = re.search(r'<functions>(.*?)</functions>', xml_str, re.DOTALL)
     if funcs_m:
@@ -418,6 +417,37 @@ def parse_xml_to_dict(xml_str: str) -> dict:
                 funcs.append({"path": path, "names": names})
         data["functions"] = funcs
         
+    # Handle TASK queries
+    mega = get_tag_val(xml_str, "mega_task_name")
+    if mega: data["mega_task_name"] = mega
+
+    tasks_m = re.search(r'<tasks>(.*?)</tasks>', xml_str, re.DOTALL)
+    if tasks_m:
+        tasks_list = []
+        for task_chunk in re.findall(r'<task>(.*?)</task>', tasks_m.group(1), re.DOTALL):
+            t_obj = {}
+            t_name = get_tag_val(task_chunk, "task_name")
+            if t_name: t_obj["task_name"] = t_name
+            sp = get_tag_val(task_chunk, "sub_prompt")
+            if sp: t_obj["sub_prompt"] = sp
+            
+            files_m2 = re.search(r'<files>(.*?)</files>', task_chunk, re.DOTALL)
+            if files_m2:
+                t_obj["files"] = re.findall(r'<path>(.*?)</path>', files_m2.group(1), re.DOTALL)
+                
+            funcs_m2 = re.search(r'<functions>(.*?)</functions>', task_chunk, re.DOTALL)
+            if funcs_m2:
+                funcs = []
+                for item in re.findall(r'<item>(.*?)</item>', funcs_m2.group(1), re.DOTALL):
+                    path = get_tag_val(item, "path")
+                    names = re.findall(r'<name>(.*?)</name>', item, re.DOTALL)
+                    if path:
+                        funcs.append({"path": path, "names": names})
+                t_obj["functions"] = funcs
+                
+            tasks_list.append(t_obj)
+        data["tasks"] = tasks_list
+
     # Handle CONSULT queries
     queries_m = re.search(r'<queries>(.*?)</queries>', xml_str, re.DOTALL)
     if queries_m:
@@ -440,9 +470,8 @@ def extract_json_from_text(text: str) -> list[str]:
     code_blocks = re.findall(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
     if code_blocks:
         return code_blocks
-        
     # Strategy B: First { to last } (Heuristic for single payload)
-    if '"phase"' in text and any(k in text for k in ['"EXECUTION"', '"ORCHESTRATE"', '"EXPLORATION"', '"SELECT"', '"CONSULT"']):
+    if '"phase"' in text and any(k in text for k in ['"EXECUTION"', '"ORCHESTRATE"', '"EXPLORATION"', '"SELECT"', '"CONSULT"', '"TASK"']):
         start_idx = text.find('{')
         end_idx = text.rfind('}')
         if start_idx != -1 and end_idx != -1 and end_idx > start_idx:

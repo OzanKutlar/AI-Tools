@@ -50,6 +50,283 @@ from combinecopy.tui.selection import run_file_selector
 from combinecopy.tui.prompt import SystemPromptApp
 from combinecopy.tui.confirm import ConfirmCopyApp
 from combinecopy.tui.apply import AutoAgentApp, OrchestratorAgentApp
+def resolve_selection_payload(selection_data, root_dir, max_depth, ext_filters, exclude_dirs):
+    found_files = []
+    important_files = []
+    partial_files = {}
+
+    from combinecopy.utils import prime_ast_cache, get_cached_blocks, resolve_paths
+
+    with console.status("[bold green]Scanning directory structure...[/bold green]", spinner="dots"):
+        scanned_files = get_files_recursive(root_dir, 0, max_depth, ext_filters, exclude_dirs=exclude_dirs)
+
+    prime_ast_cache(root_dir, scanned_files)
+
+    full_files_list = selection_data.get("files", [])
+    functions_list = selection_data.get("functions", [])
+
+    req_paths = set(full_files_list)
+    for entry in functions_list:
+        if entry.get("path"):
+            req_paths.add(entry.get("path"))
+
+    resolved_map, ambiguous_map, missing_list = resolve_paths(req_paths, scanned_files, root_dir)
+
+    if ambiguous_map or missing_list:
+        from combinecopy.tui.resolve import ResolutionApp
+        app = ResolutionApp(ambiguous_map, missing_list)
+        user_resolved = app.run()
+        if user_resolved is None:
+            console.print("[bold yellow]Resolution cancelled by user.[/bold yellow]")
+            return None, None, None, None
+        resolved_map.update(user_resolved)
+
+    missing_files_warnings = [p for p in req_paths if p not in resolved_map]
+    if missing_files_warnings:
+        console.print(f"[bold yellow]Warning: {len(missing_files_warnings)} requested files could not be resolved and will be skipped.[/bold yellow]")
+
+    found_files_final = []
+    for f in full_files_list:
+        if f in resolved_map:
+            rel_path = resolved_map[f]
+            abs_path = os.path.abspath(os.path.join(root_dir, rel_path))
+            found_files_final.append(abs_path)
+            important_files.append(abs_path)
+            console.print(f"  Selected full file: [cyan]{rel_path}[/cyan] (Resolved from {f})")
+
+    missing_funcs_to_search = []
+    for entry in functions_list:
+        fpath = entry.get("path")
+        names = entry.get("names", [])
+
+        if fpath in resolved_map:
+            rel_path = resolved_map[fpath]
+            abs_path = os.path.abspath(os.path.join(root_dir, rel_path))
+
+            blocks = get_cached_blocks(abs_path, root_dir)
+            found_names = []
+            for name in names:
+                found_block = False
+                for b in blocks:
+                    if name in b["name"]:
+                        if abs_path not in partial_files:
+                            partial_files[abs_path] = []
+                        if b not in partial_files[abs_path]:
+                            partial_files[abs_path].append(b)
+                        found_block = True
+                if found_block:
+                    found_names.append(name)
+                else:
+                    missing_funcs_to_search.append(name)
+
+            if found_names:
+                if abs_path not in found_files_final:
+                    found_files_final.append(abs_path)
+                console.print(f"  Selected functions from [cyan]{rel_path}[/cyan]: {', '.join(found_names)}")
+        else:
+            missing_funcs_to_search.extend(names)
+
+    missing_funcs_to_search = list(dict.fromkeys(missing_funcs_to_search))
+
+    if missing_funcs_to_search:
+        from combinecopy.utils import search_ast_for_functions, get_blocks_by_name
+        candidate_map = search_ast_for_functions(missing_funcs_to_search, root_dir)
+
+        ambiguous_funcs = {k: v for k, v in candidate_map.items() if v}
+        unfound_funcs = [k for k in missing_funcs_to_search if not candidate_map.get(k)]
+
+        if ambiguous_funcs:
+            func_resolutions = {k: [] for k in ambiguous_funcs}
+            for fname, paths in ambiguous_funcs.items():
+                console.print(f"\n[bold yellow]Function/Class '{fname}' not found in target file.[/bold yellow]")
+                console.print(f"It was found in {len(paths)} other file(s):")
+                for i, p in enumerate(paths):
+                    console.print(f"  [cyan]{i + 1}.[/cyan] {p}")
+
+                while True:
+                    ans = console.input("[bold]Select files to include (A for All, comma-separated numbers like 1,3, or Enter to skip): [/bold]").strip().upper()
+                    if not ans:
+                        break
+                    if ans == 'A':
+                        func_resolutions[fname] = paths
+                        break
+                    else:
+                        try:
+                            selected_indices = [int(x.strip()) - 1 for x in ans.split(',')]
+                            valid = True
+                            selected_paths = []
+                            for idx in selected_indices:
+                                if 0 <= idx < len(paths):
+                                    selected_paths.append(paths[idx])
+                                else:
+                                    console.print(f"[red]Invalid number: {idx + 1}[/red]")
+                                    valid = False
+                                    break
+                            if valid:
+                                func_resolutions[fname] = selected_paths
+                                break
+                        except ValueError:
+                            console.print("[red]Invalid input. Please enter 'A' or comma-separated numbers.[/red]")
+
+            for fname, selected_paths in func_resolutions.items():
+                if not selected_paths:
+                    continue
+                for spath in selected_paths:
+                    abs_p = os.path.abspath(os.path.join(root_dir, spath))
+                    blocks = get_blocks_by_name(abs_p, root_dir, fname)
+                    if blocks:
+                        if abs_p not in found_files_final:
+                            found_files_final.append(abs_p)
+                        if abs_p not in partial_files:
+                            partial_files[abs_p] = []
+                        existing_names = [b["name"] for b in partial_files[abs_p]]
+                        for b in blocks:
+                            if b["name"] not in existing_names:
+                                partial_files[abs_p].append(b)
+                                console.print(f"  Resolved and selected function [cyan]{b['name']}[/cyan] in [cyan]{spath}[/cyan]")
+
+        for uf in unfound_funcs:
+            console.print(f"  [yellow]Warning:[/yellow] Function/Class '[red]{uf}[/red]' could not be found anywhere in the workspace.")
+
+    return found_files_final, important_files, partial_files, missing_files_warnings
+
+def manage_tasks_cli(tasks_data, root_dir, max_depth, ext_filters, exclude_dirs, args, custom_rules):
+    import json
+    tasks_file = os.path.join(root_dir, ".cc_tasks.json")
+
+    while True:
+        console.print(f"\n[bold cyan]Mega Task:[/bold cyan] {tasks_data.get('mega_task_name', 'Unnamed Task')}")
+        console.print("[bold]Sub-Tasks:[/bold]")
+
+        tasks = tasks_data.get("tasks", [])
+        first_incomplete = -1
+        for i, t in enumerate(tasks):
+            status = "[green][x][/green]" if t.get("completed") else "[yellow][ ][/yellow]"
+            if not t.get("completed") and first_incomplete == -1:
+                first_incomplete = i
+            console.print(f"  {i+1}. {status} {t.get('task_name', 'Unnamed')}")
+
+        console.print("\n[dim]Enter a number to select a task, 'c <num>' to toggle completion, or 'q' to quit.[/dim]")
+        ans = console.input("[bold]Choice:[/bold] ").strip().lower()
+
+        if not ans:
+            if first_incomplete != -1:
+                ans = str(first_incomplete + 1)
+            else:
+                console.print("[yellow]All tasks completed. Exiting.[/yellow]")
+                break
+
+        if ans == 'q':
+            break
+
+        if ans.startswith('c '):
+            try:
+                idx = int(ans.split(' ')[1]) - 1
+                if 0 <= idx < len(tasks):
+                    tasks[idx]["completed"] = not tasks[idx].get("completed", False)
+                    with open(tasks_file, "w", encoding='utf-8') as f:
+                        json.dump(tasks_data, f, indent=4)
+                else:
+                    console.print("[red]Invalid task number.[/red]")
+            except:
+                console.print("[red]Invalid format. Use 'c <number>'.[/red]")
+            continue
+
+        try:
+            idx = int(ans) - 1
+            if 0 <= idx < len(tasks):
+                selected_task = tasks[idx]
+
+                sel_data = {
+                    "files": selected_task.get("files", []),
+                    "functions": selected_task.get("functions", [])
+                }
+
+                res = resolve_selection_payload(sel_data, root_dir, max_depth, ext_filters, exclude_dirs)
+                if res[0] is None:
+                    continue
+                found_files, imp_files, part_files, missing = res
+
+                agent_type = "cli" if getattr(args, 'cli', False) else "default"
+                sys_prompt_text = get_system_prompt(agent_type=agent_type, file_cull=True, xml_mode=args.xml, consult=args.consult, custom_rules=custom_rules, rehab=args.rehab, divide=False)
+
+                file_context_buffer = []
+                separator = "-" * 35
+                for file_path in found_files:
+                    rel_path = os.path.relpath(file_path, root_dir)
+                    is_partial = file_path in part_files and file_path not in imp_files
+
+                    _, ext = os.path.splitext(rel_path)
+                    lang = ext.lstrip('.').lower()
+                    file_context_buffer.append(separator)
+                    file_context_buffer.append(f"FILE: {rel_path}")
+                    file_context_buffer.append(separator)
+                    file_context_buffer.append(f"```{lang}")
+                    try:
+                        content = safe_read_file(file_path)
+                        if is_partial:
+                            blocks = part_files[file_path]
+                            lines = content.splitlines(keepends=True)
+                            intervals = []
+                            for b in blocks:
+                                intervals.append([max(0, b["start"] - 3), min(len(lines) - 1, b["end"] + 3)])
+                            intervals.sort(key=lambda x: x[0])
+                            merged = []
+                            for interval in intervals:
+                                if not merged or merged[-1][1] < interval[0] - 1:
+                                    merged.append(interval)
+                                else:
+                                    merged[-1][1] = max(merged[-1][1], interval[1])
+                            partial_content = []
+                            for idx_m, interval in enumerate(merged):
+                                if idx_m > 0:
+                                    partial_content.append("\n// ... (hidden lines) ...\n\n")
+                                partial_content.extend(lines[interval[0]:interval[1]+1])
+                            file_context_buffer.append("".join(partial_content))
+                        else:
+                            file_context_buffer.append(content)
+                    except Exception as e:
+                        file_context_buffer.append(f"[Error reading file: {e}]")
+                    file_context_buffer.append("```")
+                    file_context_buffer.append("\n")
+
+                if missing:
+                    file_context_buffer.append("\n--- SYSTEM NOTE: MISSING FILES ---")
+                    file_context_buffer.append("The following files were requested but could not be found or resolved:")
+                    for mfw in missing:
+                        file_context_buffer.append(f"- {mfw}")
+                    file_context_buffer.append("")
+                    
+                file_context_buffer.append("\n--- SYSTEM NOTE: CONTEXT PRUNING ---")
+                from combinecopy.prompts import get_prune
+                file_context_buffer.append(get_prune(args.xml))
+                file_context_buffer.append("")
+
+                file_context_str = "\n".join(file_context_buffer)
+                ast_map_str = generate_tree_string(found_files, root_dir)
+
+                full_text = build_prompt(
+                    user_request=selected_task.get("sub_prompt", ""),
+                    file_context=file_context_str,
+                    ast_map=ast_map_str,
+                    file_cull=True,
+                    system_prompt=sys_prompt_text,
+                    agent_type=agent_type,
+                    xml_mode=args.xml,
+                    consult=args.consult,
+                    custom_rules=custom_rules,
+                    git_diff="",
+                    rehab=args.rehab,
+                    divide=False
+                )
+
+                copy_to_clipboard(full_text)
+                console.print(f"[bold green]Payload for task '{selected_task.get('task_name')}' copied to clipboard![/bold green]")
+                break
+            else:
+                console.print("[red]Invalid task number.[/red]")
+        except ValueError:
+            console.print("[red]Invalid input.[/red]")
 
 def resolve_random_paths(paths: list[str]) -> list[str]:
     resolved = []
@@ -102,6 +379,7 @@ def main():
     parser.add_argument("-x", "--xml", action="store_true", help="Instruct the AI to use XML for payloads instead of JSON to completely avoid quote escaping issues.")
     parser.add_argument("--consult", action="store_true", help="Enable CONSULT phase for the AI to ask abstract questions to an external LLM.")
     parser.add_argument("-d", "--diff", action="store_true", help="Inject current uncommitted git diff directly into the prompt context.")
+    parser.add_argument("--divide", action="store_true", help="Enable Large Task Mode to divide complex requests into sub-tasks.")
     args = parser.parse_args()
 
     custom_rules = ""
@@ -114,8 +392,8 @@ def main():
             console.print(f"[dim yellow]Warning: Could not read .ccrules file: {e}[/dim yellow]")
     if args.system_only:
         agent_type = "orchestrator" if args.orchestrate else "cli" if args.cli else "default"
-        sys_prompt = get_system_prompt(agent_type=agent_type, file_cull=args.file_culling, xml_mode=args.xml, consult=args.consult, custom_rules=custom_rules, rehab=args.rehab)
-        important = get_system_prompt_important(agent_type=agent_type, xml_mode=args.xml)
+        sys_prompt = get_system_prompt(agent_type=agent_type, file_cull=args.file_culling, xml_mode=args.xml, consult=args.consult, custom_rules=custom_rules, rehab=args.rehab, divide=args.divide)
+        important = get_system_prompt_important(agent_type=agent_type, xml_mode=args.xml, divide=args.divide)
         
         full_sys_prompt = f"--- SYSTEM INSTRUCTIONS ---\n{sys_prompt}\n\n{important}"
         
@@ -166,6 +444,32 @@ def main():
         except Exception as e:
             console.print(f"[bold red]Failed to extract zip file: {e}[/bold red]")
             sys.exit(1)
+    ext_filters = args.file_types
+    if ext_filters:
+        normalized_exts = []
+        for ext in ext_filters:
+            if not ext.startswith("."):
+                normalized_exts.append(f".{ext.lower()}")
+            else:
+                normalized_exts.append(ext.lower())
+        ext_filters = normalized_exts
+
+    if args.divide:
+        tasks_file = os.path.join(root_dir, ".cc_tasks.json")
+        if os.path.exists(tasks_file):
+            try:
+                import json
+                with open(tasks_file, 'r', encoding='utf-8') as f:
+                    tasks_data = json.load(f)
+                if tasks_data and "tasks" in tasks_data:
+                    uncompleted = [t for t in tasks_data.get("tasks", []) if not t.get("completed")]
+                    if uncompleted:
+                        ans = console.input(f"[bold yellow]Found unfinished Mega Task '{tasks_data.get('mega_task_name', 'Unnamed')}'. Resume? [Y/n]: [/bold yellow]").strip().lower()
+                        if ans in ['', 'y', 'yes']:
+                            manage_tasks_cli(tasks_data, root_dir, max_depth, ext_filters, args.exclude, args, custom_rules)
+                            return
+            except Exception as e:
+                console.print(f"[dim yellow]Warning: Failed to read .cc_tasks.json: {e}[/dim yellow]")
 
     all_known_files = []
 
@@ -179,19 +483,18 @@ def main():
         else:
             app = AutoAgentApp(root_dir, revert_mode=args.revert, web_mode=args.web, tfs_mode=args.tfs, xml_mode=args.xml, consult_mode=args.consult, rehab_mode=args.rehab)
             result = app.run()
-            if result:
+            if isinstance(result, dict) and result.get("type") == "task_division":
+                data = result.get("data")
+                tasks_file = os.path.join(root_dir, ".cc_tasks.json")
+                import json
+                with open(tasks_file, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=4)
+                console.print("\n[bold green]Task split payload intercepted![/bold green]")
+                manage_tasks_cli(data, root_dir, max_depth, ext_filters, args.exclude, args, custom_rules)
+                return
+            elif result:
                 print_auto_summary(result)
             return
-    
-    ext_filters = args.file_types
-    if ext_filters:
-        normalized_exts = []
-        for ext in ext_filters:
-            if not ext.startswith("."):
-                normalized_exts.append(f".{ext.lower()}")
-            else:
-                normalized_exts.append(ext.lower())
-        ext_filters = normalized_exts
 
     if args.web:
         from combinecopy.web.server import start_server
@@ -199,16 +502,6 @@ def main():
         console.print("Access it in your browser at: [bold cyan]http://127.0.0.1:5000[/bold cyan]\n")
         start_server(root_dir, max_depth, ext_filters, args.exclude)
         return
-
-    if ext_filters:
-        normalized_exts = []
-        for ext in ext_filters:
-            if not ext.startswith("."):
-                normalized_exts.append(f".{ext.lower()}")
-            else:
-                normalized_exts.append(ext.lower())
-        ext_filters = normalized_exts
-
     separator = "-" * 35
 
     try:
@@ -257,152 +550,15 @@ def main():
                 return
 
             console.print("[green]Found valid JSON selection payload.[/green]")
-            found_files = []
-            important_files = []
-            partial_files = {}
-            
-            from combinecopy.utils import prime_ast_cache, get_cached_blocks, resolve_paths
-
-            with console.status("[bold green]Scanning directory structure...[/bold green]", spinner="dots"):
-                scanned_files = get_files_recursive(root_dir, 0, max_depth, ext_filters, exclude_dirs=args.exclude)
-                
-            prime_ast_cache(root_dir, scanned_files)
-
-            full_files_list = selection_data.get("files", [])
-            functions_list = selection_data.get("functions", [])
-            
-            req_paths = set(full_files_list)
-            for entry in functions_list:
-                if entry.get("path"):
-                    req_paths.add(entry.get("path"))
-                    
-            resolved_map, ambiguous_map, missing_list = resolve_paths(req_paths, scanned_files, root_dir)
-            
-            if ambiguous_map or missing_list:
-                from combinecopy.tui.resolve import ResolutionApp
-                app = ResolutionApp(ambiguous_map, missing_list)
-                user_resolved = app.run()
-                if user_resolved is None:
-                    console.print("[bold yellow]Resolution cancelled by user.[/bold yellow]")
-                    return
-                resolved_map.update(user_resolved)
-                
-            missing_files_warnings = [p for p in req_paths if p not in resolved_map]
-            if missing_files_warnings:
-                console.print(f"[bold yellow]Warning: {len(missing_files_warnings)} requested files could not be resolved and will be skipped.[/bold yellow]")
-
-            found_files_final = []
-            for f in full_files_list:
-                if f in resolved_map:
-                    rel_path = resolved_map[f]
-                    abs_path = os.path.abspath(os.path.join(root_dir, rel_path))
-                    found_files_final.append(abs_path)
-                    important_files.append(abs_path)
-                    console.print(f"  Selected full file: [cyan]{rel_path}[/cyan] (Resolved from {f})")
-
-            missing_funcs_to_search = []
-            for entry in functions_list:
-                fpath = entry.get("path")
-                names = entry.get("names", [])
-                
-                if fpath in resolved_map:
-                    rel_path = resolved_map[fpath]
-                    abs_path = os.path.abspath(os.path.join(root_dir, rel_path))
-                    
-                    blocks = get_cached_blocks(abs_path, root_dir)
-                    found_names = []
-                    for name in names:
-                        found_block = False
-                        for b in blocks:
-                            if name in b["name"]:
-                                if abs_path not in partial_files:
-                                    partial_files[abs_path] = []
-                                # Avoid appending duplicates if signatures overlap
-                                if b not in partial_files[abs_path]:
-                                    partial_files[abs_path].append(b)
-                                found_block = True
-                        if found_block:
-                            found_names.append(name)
-                        else:
-                            missing_funcs_to_search.append(name)
-                    
-                    if found_names:
-                        if abs_path not in found_files_final:
-                            found_files_final.append(abs_path)
-                        console.print(f"  Selected functions from [cyan]{rel_path}[/cyan]: {', '.join(found_names)}")
-                else:
-                    # File wasn't resolved, queue all its requested functions for a workspace search
-                    missing_funcs_to_search.extend(names)
-
-            # De-duplicate missing function list
-            missing_funcs_to_search = list(dict.fromkeys(missing_funcs_to_search))
-            
-            if missing_funcs_to_search:
-                from combinecopy.utils import search_ast_for_functions, get_blocks_by_name
-                candidate_map = search_ast_for_functions(missing_funcs_to_search, root_dir)
-                
-                ambiguous_funcs = {k: v for k, v in candidate_map.items() if v}
-                unfound_funcs = [k for k in missing_funcs_to_search if not candidate_map.get(k)]
-                
-                if ambiguous_funcs:
-                    func_resolutions = {k: [] for k in ambiguous_funcs}
-                    for fname, paths in ambiguous_funcs.items():
-                        console.print(f"\n[bold yellow]Function/Class '{fname}' not found in target file.[/bold yellow]")
-                        console.print(f"It was found in {len(paths)} other file(s):")
-                        for i, p in enumerate(paths):
-                            console.print(f"  [cyan]{i + 1}.[/cyan] {p}")
-                        
-                        while True:
-                            ans = console.input("[bold]Select files to include (A for All, comma-separated numbers like 1,3, or Enter to skip): [/bold]").strip().upper()
-                            if not ans:
-                                break
-                            if ans == 'A':
-                                func_resolutions[fname] = paths
-                                break
-                            else:
-                                try:
-                                    selected_indices = [int(x.strip()) - 1 for x in ans.split(',')]
-                                    valid = True
-                                    selected_paths = []
-                                    for idx in selected_indices:
-                                        if 0 <= idx < len(paths):
-                                            selected_paths.append(paths[idx])
-                                        else:
-                                            console.print(f"[red]Invalid number: {idx + 1}[/red]")
-                                            valid = False
-                                            break
-                                    if valid:
-                                        func_resolutions[fname] = selected_paths
-                                        break
-                                except ValueError:
-                                    console.print("[red]Invalid input. Please enter 'A' or comma-separated numbers.[/red]")
-                                    
-                    for fname, selected_paths in func_resolutions.items():
-                        if not selected_paths:
-                            console.print(f"  [yellow]Skipped[/yellow] Function/Class '[red]{fname}[/red]'")
-                            continue
-                        for spath in selected_paths:
-                            abs_p = os.path.abspath(os.path.join(root_dir, spath))
-                            blocks = get_blocks_by_name(abs_p, root_dir, fname)
-                            if blocks:
-                                if abs_p not in found_files_final:
-                                    found_files_final.append(abs_p)
-                                if abs_p not in partial_files:
-                                    partial_files[abs_p] = []
-                                existing_names = [b["name"] for b in partial_files[abs_p]]
-                                for b in blocks:
-                                    if b["name"] not in existing_names:
-                                        partial_files[abs_p].append(b)
-                                        console.print(f"  Resolved and selected function [cyan]{b['name']}[/cyan] in [cyan]{spath}[/cyan]")
-
-                for uf in unfound_funcs:
-                    console.print(f"  [yellow]Warning:[/yellow] Function/Class '[red]{uf}[/red]' could not be found anywhere in the workspace.")
-
-            if not found_files_final:
-                console.print("[bold red]No files were successfully selected from the JSON payload.[/bold red]")
+            res = resolve_selection_payload(selection_data, root_dir, max_depth, ext_filters, args.exclude)
+            if res[0] is None:
                 return
-
-            found_files = found_files_final
+            found_files, important_files, partial_files, missing_files_warnings = res
+            
+            if not found_files:
+                console.print("[bold red]No files were successfully selected from the payload.[/bold red]")
+                return
+            
             all_known_files = list(found_files)
 
         else:
@@ -479,7 +635,7 @@ def main():
             console.print("[bold cyan]Phase: Instruction & System Prompt[/bold cyan]")
             sys_arg = args.system if args.system else 'DEFAULT'
             if sys_arg == 'DEFAULT' or sys_arg == '':
-                sys_prompt_text = get_system_prompt(agent_type=agent_type, file_cull=args.file_culling, xml_mode=args.xml, consult=args.consult, custom_rules=custom_rules, rehab=args.rehab)
+                sys_prompt_text = get_system_prompt(agent_type=agent_type, file_cull=args.file_culling, xml_mode=args.xml, consult=args.consult, custom_rules=custom_rules, rehab=args.rehab, divide=args.divide)
             else:
                 try:
                     with open(sys_arg, 'r', encoding='utf-8') as f:
@@ -619,7 +775,8 @@ def main():
                                 consult=args.consult,
                                 custom_rules=custom_rules,
                                 git_diff=git_diff_text,
-                                rehab=args.rehab
+                                rehab=args.rehab,
+                                divide=args.divide
                             )
                         else:
                             full_text = file_context_str
@@ -640,10 +797,9 @@ def main():
                             parts.append(file_context_str)
                             if batch_num == 1 and git_diff_text and not user_request_data:
                                 parts.append(get_git_diff(git_diff_text))
-                            
                         if batch_num == batch_count and user_request_data:
                             parts.append(get_user_prompt(user_request_data["request"], reminder=True))
-                            parts.append(get_system_prompt_important(agent_type, xml_mode=args.xml))
+                            parts.append(get_system_prompt_important(agent_type, xml_mode=args.xml, divide=args.divide))
                             
                         full_text = "\n\n".join(parts)
 
@@ -705,7 +861,15 @@ def main():
             console.print(f"\n[bold cyan]Phase: {phase_name}[/bold cyan]")
             app = AutoAgentApp(root_dir, all_known_files, revert_mode=args.revert, ignore_initial_clipboard=True, web_mode=args.web_apply, tfs_mode=args.tfs, xml_mode=args.xml, consult_mode=args.consult, rehab_mode=args.rehab)
             result = app.run()
-            if result:
+            if isinstance(result, dict) and result.get("type") == "task_division":
+                data = result.get("data")
+                tasks_file = os.path.join(root_dir, ".cc_tasks.json")
+                import json
+                with open(tasks_file, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=4)
+                console.print("\n[bold green]Task split payload intercepted![/bold green]")
+                manage_tasks_cli(data, root_dir, max_depth, ext_filters, args.exclude, args, custom_rules)
+            elif result:
                 print_auto_summary(result)
 
     if zip_path_to_cleanup and os.path.exists(zip_path_to_cleanup):

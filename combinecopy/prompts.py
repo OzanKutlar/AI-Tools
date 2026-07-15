@@ -23,7 +23,6 @@ EXPLORATION_ORCHESTRATOR = r"""EXPLORATION: If the user provides an AST map and 
 }
 ```
 The user will run a tool to fetch these files and paste them back to you. Do not proceed to PLANNING until you have all the context you need."""
-
 EXPLORATION_ORCHESTRATOR_XML = r"""EXPLORATION: If the user provides an AST map and you need to see the full content of specific files before you can confidently create an implementation plan, you must request them. Output your request strictly in pure XML format:
 ```xml
 <antigravity_payload>
@@ -35,6 +34,55 @@ EXPLORATION_ORCHESTRATOR_XML = r"""EXPLORATION: If the user provides an AST map 
 </antigravity_payload>
 ```
 The user will run a tool to fetch these files and paste them back to you. Do not proceed to PLANNING until you have all the context you need."""
+
+PLANNING_DIVIDE = r"""PLANNING: Analyze the provided task and determine how to divide it into smaller, manageable sub-tasks. You must explicitly present a detailed explanation of what each sub-task will accomplish directly in your response as inline markdown to get user approval. Do NOT output file-formatted codeblocks. Do NOT write full implementations."""
+
+TASK_DIVIDE_SYSTEM = r"""TASK SPLIT: Once the user approves your plan, output the precise task division specifications. **CRITICAL: You must output your entire response strictly in pure JSON format, wrapped in a markdown code block (i.e., use ```json and ```).** The script relies on this exact schema:
+
+{
+  "phase": "TASK",
+  "mega_task_name": "A short, overarching name for the general task.",
+  "tasks": [
+    {
+      "task_name": "A short name for the sub-task.",
+      "sub_prompt": "Highly detailed instructions and the exact prompt to be given to the downstream LLM executing this sub-task.",
+      "files": [
+        "relative/path/to/relevant_file1.py"
+      ],
+      "functions": [
+        {
+          "path": "relative/path/to/partial_file.py",
+          "names": ["function_name", "ClassName"]
+        }
+      ]
+    }
+  ]
+}"""
+
+TASK_DIVIDE_SYSTEM_XML = r"""TASK SPLIT: Once the user approves your plan, output the precise task division specifications. **CRITICAL: You must output your entire response strictly in pure XML format, wrapped in a markdown code block (i.e., use ```xml and ```).** The script relies on this exact schema:
+
+```xml
+<antigravity_payload>
+  <phase>TASK</phase>
+  <mega_task_name>A short, overarching name for the general task.</mega_task_name>
+  <tasks>
+    <task>
+      <task_name>A short name for the sub-task.</task_name>
+      <sub_prompt><![CDATA[Highly detailed instructions and the exact prompt to be given to the downstream LLM executing this sub-task.]]></sub_prompt>
+      <files>
+        <path>relative/path/to/relevant_file1.py</path>
+      </files>
+      <functions>
+        <item>
+          <path>relative/path/to/partial_file.py</path>
+          <name>function_name</name>
+          <name>ClassName</name>
+        </item>
+      </functions>
+    </task>
+  </tasks>
+</antigravity_payload>
+```"""
 
 PLANNING_DEFAULT = r"""PLANNING: Analyze the provided code, understand requirements, and design your approach. You must always start in PLANNING mode and present an Implementation Plan and a Task Checklist directly in your response as inline markdown to document your proposed changes and get user approval, unless the user explicitly asks you not to plan in their message. If the user requests changes to your plan, stay in PLANNING mode, update the plan, and request review again until approved. CRITICAL: Do NOT write the Task Checklist or Implementation Plan into separate file structures, and do NOT assign paths or filenames (such as C:\Users\Ozan\task.md) to them. They should be written directly into your chat response as standard, inline markdown sections. Do NOT wrap them in file-formatted codeblocks. The planning mode should never be written in JSON format or wrapped in code blocks. It should always be written in raw markdown."""
 
@@ -631,12 +679,14 @@ def build_external_consult_prompt(queries: list, xml_mode: bool = False) -> str:
         q_text = q.get("question", "")
         lines.append(f"[ID: {q_id}] {q_text}")
     return "\n".join(lines)
-
-def get_execution(agent_type: str = "default", xml_mode: bool = False, consult: bool = False) -> str:
+def get_execution(agent_type: str = "default", xml_mode: bool = False, consult: bool = False, divide: bool = False) -> str:
     parts = [MODE_DESCRIPTIONS_HEADER]
     if consult:
         parts.append(get_consult(xml_mode))
-    if agent_type == "orchestrator":
+    if divide:
+        parts.append(PLANNING_DIVIDE)
+        parts.append(TASK_DIVIDE_SYSTEM_XML if xml_mode else TASK_DIVIDE_SYSTEM)
+    elif agent_type == "orchestrator":
         parts.append(EXPLORATION_ORCHESTRATOR_XML if xml_mode else EXPLORATION_ORCHESTRATOR)
         parts.append(PLANNING_ORCHESTRATOR)
         parts.append(EXECUTION_ORCHESTRATOR_XML if xml_mode else EXECUTION_ORCHESTRATOR)
@@ -678,8 +728,7 @@ def get_ast(ast_map: str) -> str:
 
 def get_file_context(file_context: str) -> str:
     return f"--- FILE CONTEXT ---\n{file_context}"
-
-def get_system_prompt_important(agent_type: str = "default", xml_mode: bool = False) -> str:
+def get_system_prompt_important(agent_type: str = "default", xml_mode: bool = False, divide: bool = False) -> str:
     mode_name = "XML" if xml_mode else "JSON"
     code_block = "xml" if xml_mode else "json"
     
@@ -691,6 +740,9 @@ def get_system_prompt_important(agent_type: str = "default", xml_mode: bool = Fa
     if agent_type == "orchestrator":
         lines.append(f"When you enter PLANNING mode, present your plan to document your proposed changes and get user approval. In ORCHESTRATION mode, you MUST wrap the {mode_name} output in a markdown code block (```{code_block}).")
         lines.append(f"Wait for the user to review and approve your plan before outputting orchestration {mode_name}.")
+    elif divide:
+        lines.append(f"When you enter PLANNING mode, present your task division plan as inline markdown. In TASK mode, you MUST wrap the {mode_name} output in a markdown code block (```{code_block}).")
+        lines.append(f"Wait for the user to review and approve your plan before outputting the TASK payload.")
     else:
         lines.append(f"When you enter PLANNING mode, present your Implementation Plan and Task Checklist directly as standard inline markdown sections. Do NOT output them in file-formatted codeblocks and do NOT assign filenames or paths to them (e.g. do not label them as C:\\Users\\Ozan\\task.md or C:\\Users\\Ozan\\implementation_plan.md). In EXECUTION mode, you MUST wrap the {mode_name} output in a markdown code block (```{code_block}).")
         lines.append("Create an inline implementation plan and wait for the user to review and approve it.")
@@ -791,10 +843,10 @@ Output your evaluation JSON using the REVIEW schema block now.
 """
 
 # --- Composition Functions ---
-def get_system_prompt(agent_type: str = "default", file_cull: bool = False, xml_mode: bool = False, consult: bool = False, custom_rules: str = "", rehab: bool = False) -> str:
+def get_system_prompt(agent_type: str = "default", file_cull: bool = False, xml_mode: bool = False, consult: bool = False, custom_rules: str = "", rehab: bool = False, divide: bool = False) -> str:
     parts = []
     parts.append(get_introduction(agent_type))
-    parts.append(get_execution(agent_type, xml_mode, consult))  # get_execution already includes planning strings internally
+    parts.append(get_execution(agent_type, xml_mode, consult, divide))  # get_execution already includes planning strings internally
     
     if rehab:
         parts.append(REHAB_XML if xml_mode else REHAB_DEFAULT)
@@ -818,7 +870,8 @@ def build_prompt(
     consult: bool = False,
     custom_rules: str = "",
     git_diff: str = "",
-    rehab: bool = False
+    rehab: bool = False,
+    divide: bool = False
 ) -> str:
     parts = []
     
@@ -839,11 +892,11 @@ def build_prompt(
     if system_prompt:
         parts.append(f"--- SYSTEM INSTRUCTIONS ---\n{system_prompt}")
     else:
-        parts.append(f"--- SYSTEM INSTRUCTIONS ---\n{get_system_prompt(agent_type, file_cull, xml_mode, consult, custom_rules, rehab)}")
+        parts.append(f"--- SYSTEM INSTRUCTIONS ---\n{get_system_prompt(agent_type, file_cull, xml_mode, consult, custom_rules, rehab, divide)}")
         
     if user_request:
         parts.append(get_user_prompt(user_request, reminder=True))
         
-    parts.append(get_system_prompt_important(agent_type, xml_mode))
+    parts.append(get_system_prompt_important(agent_type, xml_mode, divide))
     
     return "\n\n".join(parts)

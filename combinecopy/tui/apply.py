@@ -1638,12 +1638,15 @@ class AutoAgentApp(App):
                         if data.get("phase") == "EXECUTION" and "files" in data:
                             self.load_payload(data)
                             return
+                        elif data.get("phase") == "TASK" and "tasks" in data:
+                            self.exit({"type": "task_division", "data": data})
+                            return
                         elif data.get("phase") == "CONSULT":
                             self.load_consult_payload(data)
                             return
                             
             # Fallback to JSON
-            if '"phase":' in content and ('"EXECUTION"' in content or '"CONSULT"' in content):
+            if '"phase":' in content and ('"EXECUTION"' in content or '"CONSULT"' in content or '"TASK"' in content):
                 json_blocks = extract_json_from_text(content)
                 for json_str in json_blocks:
                     try:
@@ -1651,6 +1654,9 @@ class AutoAgentApp(App):
                         if isinstance(data, dict):
                             if data.get("phase") == "EXECUTION" and "files" in data:
                                 self.load_payload(data)
+                                return
+                            elif data.get("phase") == "TASK" and "tasks" in data:
+                                self.exit({"type": "task_division", "data": data})
                                 return
                             elif data.get("phase") == "CONSULT" and getattr(self, 'consult_mode', False):
                                 self.load_consult_payload(data)
