@@ -71,15 +71,17 @@ def resolve_selection_payload(selection_data, root_dir, max_depth, ext_filters, 
             req_paths.add(entry.get("path"))
 
     resolved_map, ambiguous_map, missing_list = resolve_paths(req_paths, scanned_files, root_dir)
-
     if ambiguous_map or missing_list:
-        from combinecopy.tui.resolve import ResolutionApp
-        app = ResolutionApp(ambiguous_map, missing_list)
-        user_resolved = app.run()
-        if user_resolved is None:
-            console.print("[bold yellow]Resolution cancelled by user.[/bold yellow]")
+        console.print("\n[bold yellow]File Resolution Issues:[/bold yellow]")
+        for req, options in ambiguous_map.items():
+            console.print(f"  [yellow]Ambiguous:[/yellow] {req} (Found {len(options)} matches, skipping)")
+        for req in missing_list:
+            console.print(f"  [red]Missing:[/red] {req} (Not found in workspace, skipping)")
+            
+        ans = console.input("\n[bold yellow]Continue without these files? [Y/n]: [/bold yellow]").strip().lower()
+        if ans in ['n', 'no']:
+            console.print("[bold yellow]Operation cancelled by user.[/bold yellow]")
             return None, None, None, None
-        resolved_map.update(user_resolved)
 
     missing_files_warnings = [p for p in req_paths if p not in resolved_map]
     if missing_files_warnings:
