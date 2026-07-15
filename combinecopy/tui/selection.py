@@ -641,9 +641,9 @@ def run_file_selector(root_dir: str, files: list[str], ast_mode: bool = False, p
                     os.remove(p)
                 except Exception:
                     pass
-        else:
-            app = FileSelector(root_dir, files, ast_mode=ast_mode, preselected_files=preselected_files, preselected_partials=preselected_partials)
-            return app.run()
+    else:
+        app = FileSelector(root_dir, files, ast_mode=ast_mode, preselected_files=preselected_files, preselected_partials=preselected_partials)
+        return app.run()
 
 if __name__ == "__main__":
     if len(sys.argv) >= 5:
