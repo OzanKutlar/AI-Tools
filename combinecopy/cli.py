@@ -246,7 +246,7 @@ def manage_tasks_cli(tasks_data, root_dir, max_depth, ext_filters, exclude_dirs,
                 for func in selected_task.get("functions", []):
                     console.print(f"  - [yellow]{func.get('path')} -> {', '.join(func.get('names', []))}[/yellow]")
                     
-                ans_mod = console.input("\n[bold yellow]Modify requested files? [y/N]: [/bold yellow]").strip().lower()
+                ans_mod = console.input("\n[bold yellow]Modify requested files? \\[y/N]: [/bold yellow]").strip().lower()
 
                 sel_data = {
                     "files": selected_task.get("files", []),
@@ -271,12 +271,18 @@ def manage_tasks_cli(tasks_data, root_dir, max_depth, ext_filters, exclude_dirs,
 
                 agent_type = "cli" if getattr(args, 'cli', False) else "default"
                 sys_prompt_text = get_system_prompt(agent_type=agent_type, file_cull=True, xml_mode=args.xml, consult=args.consult, custom_rules=custom_rules, rehab=args.rehab, divide=False)
-
                 file_context_buffer = []
                 separator = "-" * 35
+                important_set = set(imp_files) if imp_files is not None else set()
                 for file_path in found_files:
                     rel_path = os.path.relpath(file_path, root_dir)
-                    is_partial = file_path in part_files and file_path not in imp_files
+                    is_important = file_path in important_set
+                    is_partial = file_path in part_files and not is_important
+
+                    # Files that are neither important (FULL) nor partial are
+                    # represented only via the AST map, not the full context.
+                    if not is_important and not is_partial:
+                        continue
 
                     _, ext = os.path.splitext(rel_path)
                     lang = ext.lstrip('.').lower()

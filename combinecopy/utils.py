@@ -358,8 +358,8 @@ def parse_xml_to_dict(xml_str: str) -> dict:
     # Handle files
     files_m = re.search(r'<files>(.*?)</files>', xml_str, re.DOTALL)
     if files_m:
-        if data["phase"] == "ORCHESTRATE":
-            data["files"] = re.findall(r'<path>(.*?)</path>', files_m.group(1), re.DOTALL)
+        if data["phase"] in ("ORCHESTRATE", "SELECT"):
+            data["files"] = [p.strip() for p in re.findall(r'<path>(.*?)</path>', files_m.group(1), re.DOTALL)]
         else:
             files = []
             for file_chunk in re.findall(r'<file>(.*?)</file>', files_m.group(1), re.DOTALL):
