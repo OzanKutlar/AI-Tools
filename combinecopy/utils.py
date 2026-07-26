@@ -806,7 +806,6 @@ def copy_to_clipboard(text: str) -> bool:
     except Exception as e:
         console.print(f"[bold red]Error copying to clipboard:[/bold red] {e}")
         return False
-
 def copy_file_to_clipboard(filepath: str) -> bool:
     """Copies a file to the clipboard using PowerShell so it can be pasted as an attachment."""
     try:
@@ -815,6 +814,74 @@ def copy_file_to_clipboard(filepath: str) -> bool:
         return True
     except Exception as e:
         console.print(f"[bold red]Error copying file to clipboard:[/bold red] {e}")
+        return False
+
+def get_default_rules_path(root_dir: str | None = None) -> str:
+    """Returns the absolute path to default_rules.json in workspace or package root."""
+    if root_dir:
+        workspace_path = os.path.join(root_dir, "default_rules.json")
+        if os.path.exists(workspace_path):
+            return workspace_path
+    
+    pkg_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    pkg_json_path = os.path.join(pkg_root, "default_rules.json")
+    if os.path.exists(pkg_json_path):
+        return pkg_json_path
+        
+    current_dir_path = os.path.join(os.path.dirname(__file__), "default_rules.json")
+    if os.path.exists(current_dir_path):
+        return current_dir_path
+        
+    return os.path.join(root_dir or os.getcwd(), "default_rules.json")
+
+def load_default_rules(root_dir: str | None = None) -> list[dict]:
+    """Loads default rules array from default_rules.json."""
+    path = get_default_rules_path(root_dir)
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return data
+        except Exception:
+            pass
+    return []
+
+def save_default_rule(title: str, content: str, description: str = "", root_dir: str | None = None) -> bool:
+    """Appends or updates a default rule in default_rules.json."""
+    path = get_default_rules_path(root_dir)
+    rules = load_default_rules(root_dir)
+    
+    clean_title = title.strip()
+    if not clean_title:
+        return False
+
+    rule_id = clean_title.lower().replace(" ", "_")
+    rule_id = re.sub(r'[^a-z0-9_]', '', rule_id)
+    
+    found = False
+    for r in rules:
+        if r.get("title", "").strip().lower() == clean_title.lower():
+            r["content"] = content
+            if description:
+                r["description"] = description
+            found = True
+            break
+            
+    if not found:
+        rules.append({
+            "id": rule_id,
+            "title": clean_title,
+            "description": description or f"Custom rule for {clean_title}",
+            "content": content
+        })
+        
+    try:
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(rules, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception:
         return False
 
 def get_files_recursive(directory, current_depth, max_depth, extensions, exclude_dirs=None):

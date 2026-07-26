@@ -8,6 +8,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Header, Footer, Label, TextArea, Button, OptionList
 from textual.binding import Binding
+from combinecopy.tui.rules import RulesScreen
 
 class SystemPromptApp(App):
     """TUI for injecting system instructions and user requests."""
@@ -147,60 +148,15 @@ class SystemPromptApp(App):
         
     def _enable_editor_button(self) -> None:
         self.query_one("#btn-editor", Button).disabled = False
-
     def action_edit_rules(self) -> None:
-        btn = self.query_one("#btn-rules", Button)
-        if btn.disabled:
-            return
-        btn.disabled = True
-        
-        thread = threading.Thread(target=self._rules_editor_worker, daemon=True)
-        thread.start()
-        self.notify("Waiting for external editor to close...", severity="info")
+        self.app.push_screen(
+            RulesScreen(self.root_dir),
+            callback=self._on_rules_screen_dismissed
+        )
 
-    def _rules_editor_worker(self) -> None:
-        ccrules_path = os.path.join(self.root_dir, '.ccrules')
-        if not os.path.exists(ccrules_path):
-            try:
-                with open(ccrules_path, 'w', encoding='utf-8') as f:
-                    f.write("# Add your project-specific AI rules here.\n")
-            except Exception as e:
-                self.call_from_thread(self.notify, f"Failed to create .ccrules: {e}", severity="error")
-                self.call_from_thread(self._enable_rules_button)
-                return
-
-        npp_path = shutil.which("notepad++") or shutil.which("notepad++.exe")
-        if not npp_path:
-            possible_paths = [
-                r"C:\Program Files\Notepad++\notepad++.exe",
-                r"C:\Program Files (x86)\Notepad++\notepad++.exe"
-            ]
-            for p in possible_paths:
-                if os.path.exists(p):
-                    npp_path = p
-                    break
-                    
-        if npp_path:
-            cmd = [npp_path, "-multiInst", "-nosession", ccrules_path]
-        elif os.name == 'nt':
-            cmd = ["notepad", ccrules_path]
-        else:
-            editor = os.environ.get('EDITOR', 'nano')
-            cmd = [editor, ccrules_path]
-            
-        try:
-            subprocess.run(cmd, check=True)
-        except Exception as e:
-            self.call_from_thread(self.notify, f"Editor failed to launch: {e}", severity="error")
-            
-        try:
-            with open(ccrules_path, 'r', encoding='utf-8') as f:
-                new_rules = f.read().strip()
-            self.call_from_thread(self._update_rules_in_textarea, new_rules)
-        except Exception as e:
-            self.call_from_thread(self.notify, f"Failed to read .ccrules: {e}", severity="error")
-        finally:
-            self.call_from_thread(self._enable_rules_button)
+    def _on_rules_screen_dismissed(self, new_rules: str | None) -> None:
+        if new_rules is not None:
+            self._update_rules_in_textarea(new_rules)
 
     def _update_rules_in_textarea(self, new_rules: str) -> None:
         ta = self.query_one("#sys-prompt", TextArea)
