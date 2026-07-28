@@ -410,15 +410,36 @@ class FtpApp(App):
         width: 60%;
         height: 100%;
     }
-    
     #stats-panel {
-        height: 35%;
+        height: auto;
         border-bottom: solid #5a4d45;
         padding: 1 2;
     }
     
+    #confirm-dialog {
+        display: none;
+        height: auto;
+        border-bottom: solid #d08c60;
+        background: #3c3431;
+        padding: 1;
+    }
+    
+    #confirm-dialog.-active {
+        display: block;
+    }
+    
+    .btn-row {
+        align: center middle;
+        height: auto;
+        margin-top: 1;
+    }
+    
+    .btn-row Button {
+        margin: 0 1;
+    }
+    
     #log-panel {
-        height: 65%;
+        height: 1fr;
     }
     
     #ftp-log { height: 1fr; background: #1e1a18; }
@@ -435,13 +456,15 @@ class FtpApp(App):
     #global-progress { margin-bottom: 1; }
     .stat-label { margin-bottom: 1; color: #ead6c9; }
     """
-
     def __init__(self, config: dict, files: list[dict]):
         super().__init__()
         self.config = config
         self.files = files
         self.total_bytes_transferred = 0
         self.total_size = sum(os.path.getsize(f.get("abs_path", f["path"])) for f in files if f["action"] == "upload" and os.path.exists(f.get("abs_path", f["path"])))
+        
+        self.user_choice_event = threading.Event()
+        self.user_choice_result = False
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="layout"):
@@ -461,9 +484,28 @@ class FtpApp(App):
                     yield Label(f"Uploaded: 0 B / {format_bytes(self.total_size)}", id="lbl-uploaded", classes="stat-label")
                     yield Label("Current File: Preparing...", id="lbl-current", classes="stat-label")
                     
+                with Vertical(id="confirm-dialog"):
+                    yield Label("Remote mismatch detected!", id="lbl-confirm-msg", classes="panel-title")
+                    with Horizontal(classes="btn-row"):
+                        yield Button("Yes (Overwrite)", variant="error", id="btn-overwrite")
+                        yield Button("No (Skip)", variant="primary", id="btn-skip")
+                        
                 with Vertical(id="log-panel"):
                     yield Label("FTP Protocol Log", classes="panel-title")
                     yield RichLog(id="ftp-log", highlight=True, wrap=True)
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id in ("btn-overwrite", "btn-skip"):
+            dialog = self.query_one("#confirm-dialog")
+            dialog.remove_class("-active")
+            self.user_choice_result = (event.button.id == "btn-overwrite")
+            self.user_choice_event.set()
+
+    def _ask_user_confirmation(self, filename: str) -> None:
+        dialog = self.query_one("#confirm-dialog")
+        msg_label = self.query_one("#lbl-confirm-msg", Label)
+        msg_label.update(f"Remote state mismatch for '{filename}'. Overwrite?")
+        dialog.add_class("-active")
+        self.user_choice_event.clear()
 
     def on_mount(self) -> None:
         # Start the background thread for FTP transfer
@@ -568,6 +610,15 @@ class FtpApp(App):
                             except subprocess.CalledProcessError as e:
                                 self.call_from_thread(self._log_msg, f"Verification failed: Could not read {git_path} at {base_commit}")
                                 proceed = False
+
+                        if not proceed:
+                            self.call_from_thread(self._ask_user_confirmation, filename)
+                            self.user_choice_event.wait()
+                            proceed = self.user_choice_result
+                            if proceed:
+                                self.call_from_thread(self._log_msg, f"User chose to FORCE OVERWRITE '{filename}'.")
+                            else:
+                                self.call_from_thread(self._log_msg, f"User chose to SKIP '{filename}'.")
 
                 if not proceed:
                     self.call_from_thread(self._finish_file, i, "error")
