@@ -554,14 +554,15 @@ def main():
                 return
 
             selection_data = None
-            
             # First check for XML
             xml_results = extract_xml_from_text(clipboard_content)
             for xml_str in xml_results:
                 data = parse_xml_to_dict(xml_str)
-                if data and (data.get("phase") == "SELECT" or "files" in data or "functions" in data):
-                    selection_data = data
-                    break
+                if data:
+                    phase = data.get("phase")
+                    if phase == "SELECT" or (not phase and ("files" in data or "functions" in data)):
+                        selection_data = data
+                        break
                     
             # Fallback to JSON
             if not selection_data:
@@ -569,7 +570,8 @@ def main():
                 for json_str in results:
                     data, _ = intelligent_json_fix(json_str)
                     if data and isinstance(data, dict):
-                        if data.get("phase") == "SELECT" or "files" in data or "functions" in data:
+                        phase = data.get("phase")
+                        if phase == "SELECT" or (not phase and ("files" in data or "functions" in data)):
                             selection_data = data
                             break
 
