@@ -69,16 +69,49 @@ def resolve_selection_payload(selection_data, root_dir, max_depth, ext_filters, 
     for entry in functions_list:
         if entry.get("path"):
             req_paths.add(entry.get("path"))
-
     resolved_map, ambiguous_map, missing_list = resolve_paths(req_paths, scanned_files, root_dir)
-    if ambiguous_map or missing_list:
-        console.print("\n[bold yellow]File Resolution Issues:[/bold yellow]")
+    resolved_map = {k: [v] for k, v in resolved_map.items()}
+
+    if ambiguous_map:
+        console.print("\n[bold yellow]Ambiguous File Resolution:[/bold yellow]")
         for req, options in ambiguous_map.items():
-            console.print(f"  [yellow]Ambiguous:[/yellow] {req} (Found {len(options)} matches, skipping)")
+            console.print(f"\n[bold yellow]File '{req}' is ambiguous.[/bold yellow]")
+            console.print(f"It matches {len(options)} file(s) in the workspace:")
+            for i, p in enumerate(options):
+                console.print(f"  [cyan]{i + 1}.[/cyan] {p}")
+
+            while True:
+                ans = console.input("[bold]Select files to include (A for All, comma-separated numbers like 1,3, or Enter to skip): [/bold]").strip().upper()
+                if not ans:
+                    break
+                if ans == 'A':
+                    resolved_map[req] = options
+                    break
+                else:
+                    try:
+                        selected_indices = [int(x.strip()) - 1 for x in ans.split(',')]
+                        valid = True
+                        selected_paths = []
+                        for idx in selected_indices:
+                            if 0 <= idx < len(options):
+                                selected_paths.append(options[idx])
+                            else:
+                                console.print(f"[red]Invalid number: {idx + 1}[/red]")
+                                valid = False
+                                break
+                        if valid:
+                            if selected_paths:
+                                resolved_map[req] = selected_paths
+                            break
+                    except ValueError:
+                        console.print("[red]Invalid input. Please enter 'A' or comma-separated numbers.[/red]")
+
+    if missing_list:
+        console.print("\n[bold yellow]Missing Files:[/bold yellow]")
         for req in missing_list:
             console.print(f"  [red]Missing:[/red] {req} (Not found in workspace, skipping)")
             
-        ans = console.input("\n[bold yellow]Continue without these files? [Y/n]: [/bold yellow]").strip().lower()
+        ans = console.input("\n[bold yellow]Continue without missing files? [Y/n]: [/bold yellow]").strip().lower()
         if ans in ['n', 'no']:
             console.print("[bold yellow]Operation cancelled by user.[/bold yellow]")
             return None, None, None, None
@@ -90,11 +123,13 @@ def resolve_selection_payload(selection_data, root_dir, max_depth, ext_filters, 
     found_files_final = []
     for f in full_files_list:
         if f in resolved_map:
-            rel_path = resolved_map[f]
-            abs_path = os.path.abspath(os.path.join(root_dir, rel_path))
-            found_files_final.append(abs_path)
-            important_files.append(abs_path)
-            console.print(f"  Selected full file: [cyan]{rel_path}[/cyan] (Resolved from {f})")
+            for rel_path in resolved_map[f]:
+                abs_path = os.path.abspath(os.path.join(root_dir, rel_path))
+                if abs_path not in found_files_final:
+                    found_files_final.append(abs_path)
+                if abs_path not in important_files:
+                    important_files.append(abs_path)
+                console.print(f"  Selected full file: [cyan]{rel_path}[/cyan] (Resolved from {f})")
 
     missing_funcs_to_search = []
     for entry in functions_list:
@@ -102,29 +137,29 @@ def resolve_selection_payload(selection_data, root_dir, max_depth, ext_filters, 
         names = entry.get("names", [])
 
         if fpath in resolved_map:
-            rel_path = resolved_map[fpath]
-            abs_path = os.path.abspath(os.path.join(root_dir, rel_path))
+            for rel_path in resolved_map[fpath]:
+                abs_path = os.path.abspath(os.path.join(root_dir, rel_path))
 
-            blocks = get_cached_blocks(abs_path, root_dir)
-            found_names = []
-            for name in names:
-                found_block = False
-                for b in blocks:
-                    if name in b["name"]:
-                        if abs_path not in partial_files:
-                            partial_files[abs_path] = []
-                        if b not in partial_files[abs_path]:
-                            partial_files[abs_path].append(b)
-                        found_block = True
-                if found_block:
-                    found_names.append(name)
-                else:
-                    missing_funcs_to_search.append(name)
+                blocks = get_cached_blocks(abs_path, root_dir)
+                found_names = []
+                for name in names:
+                    found_block = False
+                    for b in blocks:
+                        if name in b["name"]:
+                            if abs_path not in partial_files:
+                                partial_files[abs_path] = []
+                            if b not in partial_files[abs_path]:
+                                partial_files[abs_path].append(b)
+                            found_block = True
+                    if found_block:
+                        found_names.append(name)
+                    else:
+                        missing_funcs_to_search.append(name)
 
-            if found_names:
-                if abs_path not in found_files_final:
-                    found_files_final.append(abs_path)
-                console.print(f"  Selected functions from [cyan]{rel_path}[/cyan]: {', '.join(found_names)}")
+                if found_names:
+                    if abs_path not in found_files_final:
+                        found_files_final.append(abs_path)
+                    console.print(f"  Selected functions from [cyan]{rel_path}[/cyan]: {', '.join(found_names)}")
         else:
             missing_funcs_to_search.extend(names)
 
