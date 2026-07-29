@@ -1,4 +1,4 @@
-# AI-Tools
+# combineCopy
 
 This repository provides a suite of command-line utilities. They bridge the gap between your local development workspace and Large Language Models (LLMs).
 
@@ -7,8 +7,8 @@ This repository provides a suite of command-line utilities. They bridge the gap 
 This repository is configured as a Python package. Install it locally to expose the tools globally on your command line.
 
 ```bash
-git clone https://github.com/OzanKutlar/AI-Tools
-cd AI-Tools
+git clone https://github.com/OzanKutlar/combineCopy
+cd combineCopy
 pip install -e .
 ```
 
